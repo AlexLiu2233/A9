@@ -1,8 +1,8 @@
-package com.s26615161.CPEN431.A4;
+package com.g20.CPEN431.A7;
 
 import ca.NetSysLab.ProtocolBuffers.KeyValueResponse.KVResponse;
 
-import static com.s26615161.CPEN431.A4.Constants.*;
+import static com.g20.CPEN431.A7.Constants.*;
 
 /**
  * Wrapper for two ResponseCache instances that alternates between them.

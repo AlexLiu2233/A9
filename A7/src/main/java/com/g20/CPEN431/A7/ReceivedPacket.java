@@ -1,4 +1,4 @@
-package com.s26615161.CPEN431.A4;
+package com.g20.CPEN431.A7;
 
 import ca.NetSysLab.ProtocolBuffers.Message.Msg;
 
