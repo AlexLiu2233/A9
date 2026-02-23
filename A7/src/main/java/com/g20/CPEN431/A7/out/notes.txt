@@ -1,0 +1,5 @@
+Random Gossiping
+Gossip should add node
+INDEMPOTENT
+addNode, addRandomNote
+getNode, getRandomNode
