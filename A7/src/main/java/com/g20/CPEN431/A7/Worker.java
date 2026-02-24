@@ -23,12 +23,21 @@ public class Worker extends Thread {
     private final GossipService gossipService;
     private volatile boolean running = true;
 
+    // Dedicated socket for forwarding requests (one per worker — workers are single-threaded
+    // so there's no multiplexing issue within a single worker)
+    private final DatagramSocket forwardSocket;
+
     public Worker(int id, DatagramSocket socket, GossipService gossipService) throws SocketException {
         super("Worker-" + id);
         this.queue = new ArrayBlockingQueue<>(QUEUE_SIZE_PER_WORKER);
         this.cache = new DualResponseCache(MAX_CACHE_ENTRIES_PER_WORKER / 2, CACHE_CLEANUP_INTERVAL_MS);
         this.sendSocket = socket;
         this.gossipService = gossipService;
+
+        // One forwarding socket per worker — safe because each worker processes
+        // requests sequentially (single thread), so only one forward is in-flight at a time
+        this.forwardSocket = new DatagramSocket();
+        this.forwardSocket.setSoTimeout(FORWARD_TIMEOUT_MS);
     }
 
     public boolean offer(ReceivedPacket packet) {
@@ -38,6 +47,9 @@ public class Worker extends Thread {
     public void shutdown() {
         running = false;
         this.interrupt();
+        if (forwardSocket != null && !forwardSocket.isClosed()) {
+            forwardSocket.close();
+        }
         sendSocket.close();
     }
 
@@ -90,8 +102,17 @@ public class Worker extends Thread {
                 Node responsible = gossipService.getHashRing().getNodeForKey(request.getKey());
 
                 if (responsible != null && responsible.id != gossipService.getSelfNode().id) {
-                    // Forward to the responsible node
-                    forwardRequest(packet, msg, request, command, messageId, messageIdBytes, responsible);
+                    // Only forward if the request came from a client (not from another node).
+                    // We detect "came from another node" by checking if the sender is a known
+                    // node in our membership. If so, process locally to prevent forwarding loops
+                    // caused by inconsistent hash rings across nodes.
+                    if (isFromKnownNode(packet)) {
+                        // This was already forwarded to us — process locally to avoid loops
+                        processLocally(packet, msg, request, command, messageId, messageIdBytes);
+                    } else {
+                        // Client request — forward to the responsible node
+                        forwardRequest(packet, msg, messageId, responsible);
+                    }
                     return;
                 }
             }
@@ -102,6 +123,26 @@ public class Worker extends Thread {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Check if a packet came from a known node in the cluster (i.e., was forwarded).
+     * This prevents forwarding loops when hash rings are inconsistent across nodes.
+     */
+    private boolean isFromKnownNode(ReceivedPacket packet) {
+        // Check if the sender address:port matches any known node
+        // Note: forwarded packets come from ephemeral ports, so we can't match by port.
+        // Instead, check if the sender IP matches any known node IP.
+        // This is a heuristic — in a multi-node-per-host setup it may be too broad,
+        // but it's safe (worst case: we process locally instead of forwarding).
+        String senderIp = packet.address.getHostAddress();
+        for (Node node : gossipService.getHashRing().getAllNodes()) {
+            if (node.ipaddress.getHostAddress().equals(senderIp)
+                    && node.id != gossipService.getSelfNode().id) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -138,19 +179,16 @@ public class Worker extends Thread {
 
     /**
      * Forward a client request to the responsible node and relay the response back.
-     * Uses a fresh ephemeral socket per forward to avoid response mixups between
-     * concurrent forwarded requests. On failure, falls back to returning an error
-     * so the client can retry.
+     * Uses the worker's dedicated forward socket. Since each worker is single-threaded,
+     * only one forward is in-flight at a time — no response mixup risk.
+     *
+     * On failure, sends an overload error to the client so it can retry.
      */
     private void forwardRequest(ReceivedPacket originalPacket, Msg originalMsg,
-                                KVRequest request, int command,
-                                ByteString messageId, byte[] messageIdBytes,
-                                Node target) {
-        DatagramSocket fwdSocket = null;
+                                ByteString messageId, Node target) {
         try {
-            // Create a fresh socket for this specific forward to avoid response mixups
-            fwdSocket = new DatagramSocket();
-            fwdSocket.setSoTimeout(FORWARD_TIMEOUT_MS);
+            // Drain any stale responses left over from previous timed-out forwards
+            drainStalePackets();
 
             // Send the original serialized message to the target node
             byte[] msgBytes = originalMsg.toByteArray();
@@ -158,20 +196,19 @@ public class Worker extends Thread {
                     msgBytes, msgBytes.length,
                     target.ipaddress, target.port
             );
-            fwdSocket.send(forwardPacket);
+            forwardSocket.send(forwardPacket);
 
-            // Wait for response from target, with message ID validation
+            // Wait for response from target with message ID validation
             byte[] responseBuf = new byte[MAX_PACKET_SIZE];
             DatagramPacket responsePacket = new DatagramPacket(responseBuf, responseBuf.length);
 
-            // Retry loop: keep receiving until we get the matching response or timeout
             long deadline = System.currentTimeMillis() + FORWARD_TIMEOUT_MS;
             while (System.currentTimeMillis() < deadline) {
                 int remaining = (int) (deadline - System.currentTimeMillis());
                 if (remaining <= 0) break;
-                fwdSocket.setSoTimeout(remaining);
+                forwardSocket.setSoTimeout(Math.max(remaining, 1));
 
-                fwdSocket.receive(responsePacket);
+                forwardSocket.receive(responsePacket);
 
                 // Validate the response matches our request's message ID
                 try {
@@ -179,7 +216,7 @@ public class Worker extends Thread {
                             ByteString.copyFrom(responseBuf, 0, responsePacket.getLength()));
 
                     if (responseMsg.getMessageID().equals(messageId)) {
-                        // Matching response - relay back to the original client
+                        // Matching response — relay back to the original client
                         DatagramPacket clientResponse = new DatagramPacket(
                                 responseBuf, responsePacket.getLength(),
                                 originalPacket.address, originalPacket.port
@@ -187,33 +224,54 @@ public class Worker extends Thread {
                         sendSocket.send(clientResponse);
                         return; // Success
                     }
-                    // Non-matching message ID - discard and keep waiting
+                    // Non-matching message ID — discard and keep waiting
                 } catch (InvalidProtocolBufferException e) {
-                    // Couldn't parse response - discard and keep waiting
+                    // Couldn't parse response — discard and keep waiting
                 }
             }
 
-            // Timed out waiting for a matching response - send error to client
+            // Timed out waiting for matching response — send error to client
             sendErrorToClient(originalPacket, messageId);
 
         } catch (java.net.SocketTimeoutException e) {
-            // Forward timed out - send error so client can retry
+            // Forward timed out
             sendErrorToClient(originalPacket, messageId);
         } catch (IOException e) {
-            // Forward failed - send error so client can retry
             System.err.println("Forward failed to node " + target.id + ": " + e.getMessage());
             sendErrorToClient(originalPacket, messageId);
+        }
+    }
+
+    /**
+     * Drain any stale packets from the forward socket left over from previous
+     * timed-out forwards. Uses a very short timeout to avoid blocking.
+     */
+    private void drainStalePackets() {
+        try {
+            forwardSocket.setSoTimeout(1); // 1ms — just check if anything is buffered
+            byte[] drain = new byte[MAX_PACKET_SIZE];
+            DatagramPacket drainPacket = new DatagramPacket(drain, drain.length);
+            // Drain up to a few stale packets
+            for (int i = 0; i < 5; i++) {
+                try {
+                    forwardSocket.receive(drainPacket);
+                } catch (java.net.SocketTimeoutException e) {
+                    break; // Nothing more to drain
+                }
+            }
+        } catch (IOException e) {
+            // Ignore drain errors
         } finally {
-            if (fwdSocket != null && !fwdSocket.isClosed()) {
-                fwdSocket.close();
+            try {
+                forwardSocket.setSoTimeout(FORWARD_TIMEOUT_MS);
+            } catch (SocketException e) {
+                // Ignore
             }
         }
     }
 
     /**
      * Send an overload/retry error back to the client when forwarding fails.
-     * This ensures the client gets a response and can retry, rather than
-     * silently dropping the request.
      */
     private void sendErrorToClient(ReceivedPacket originalPacket, ByteString messageId) {
         try {
@@ -224,7 +282,7 @@ public class Worker extends Thread {
             );
             sendSocket.send(responsePacket);
         } catch (IOException ex) {
-            // Best effort - nothing more we can do
+            // Best effort
         }
     }
 

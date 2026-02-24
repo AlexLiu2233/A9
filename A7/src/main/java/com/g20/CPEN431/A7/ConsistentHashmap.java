@@ -36,8 +36,10 @@ public class ConsistentHashmap {
 
     /**
      * Add a node to the hash ring.
-     * @return 0 on success, 1 if the node already exists, 2 if a hash collision occurred
-     * Note: Can fail if a single collision happens with virtual nodes. Potentially overly aggressive.
+     * @return 0 on success (at least one virtual node added),
+     *         1 if the node already exists (all vnodes are already present),
+     *         2 if all virtual nodes collided with different nodes (none added)
+     * Tolerates partial collisions: adds whichever virtual nodes don't collide.
      */
     public int addNode(Node node) {
         // Pre-compute hashes outside the lock
@@ -48,21 +50,31 @@ public class ConsistentHashmap {
 
         lock.writeLock().lock();
         try {
-            // Check ALL virtual node hashes for duplicates/collisions before inserting
+            int alreadyPresent = 0;
+            int collisions = 0;
+            int added = 0;
+
             for (int h : hashes) {
                 Node existing = ring.get(h);
                 if (existing != null) {
                     if (existing.id == node.id) {
-                        return 1; // Duplicate node
+                        alreadyPresent++;
+                    } else {
+                        collisions++;
                     }
-                    return 2; // Hash collision with a different node
+                } else {
+                    ring.put(h, node);
+                    added++;
                 }
             }
 
-            for (int h : hashes) {
-                ring.put(h, node);
+            if (alreadyPresent == virtualNodes) {
+                return 1; // Node already fully present
             }
-            return 0;
+            if (added == 0) {
+                return 2; // All slots collided, nothing added
+            }
+            return 0; // At least one vnode was added
         } finally {
             lock.writeLock().unlock();
         }
@@ -70,8 +82,9 @@ public class ConsistentHashmap {
 
     /**
      * Remove a node from the hash ring.
-     * @return 0 on success, 1 if the node does not exist
-     * Note: Can fail if a single collision happens with virtual nodes. Potentially fragile. With current addNode implementation this is fine, but consider revising if that changes.
+     * @return 0 on success (at least one virtual node removed),
+     *         1 if the node was not found on the ring
+     * Tolerates partial presence: removes whichever virtual nodes belong to this node.
      */
     public int removeNode(Node node) {
         // Pre-compute hashes outside the lock
@@ -82,18 +95,15 @@ public class ConsistentHashmap {
 
         lock.writeLock().lock();
         try {
-            // Verify ALL virtual node hashes belong to this node before removing
+            int removed = 0;
             for (int h : hashes) {
                 Node existing = ring.get(h);
-                if (existing == null || existing.id != node.id) {
-                    return 1; // Node not on the ring
+                if (existing != null && existing.id == node.id) {
+                    ring.remove(h);
+                    removed++;
                 }
             }
-
-            for (int h : hashes) {
-                ring.remove(h);
-            }
-            return 0;
+            return removed > 0 ? 0 : 1;
         } finally {
             lock.writeLock().unlock();
         }
