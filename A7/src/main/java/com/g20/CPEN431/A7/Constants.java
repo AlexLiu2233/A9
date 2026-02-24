@@ -69,6 +69,9 @@ public final class Constants {
     /** Timeout for forwarded requests to other nodes (ms) */
     public static final int FORWARD_TIMEOUT_MS = 500;
 
+    /** Magic bytes prefixed to forwarded UDP packets to distinguish them from client requests */
+    public static final byte[] FORWARD_MAGIC = {(byte) 0xF0, (byte) 0x72, (byte) 0x57, (byte) 0x44};
+
     public static boolean isMutableCommand(int command) {
         return command == CMD_PUT || command == CMD_REMOVE ||
                 command == CMD_WIPEOUT || command == CMD_GET_PID;

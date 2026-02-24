@@ -10,10 +10,12 @@ public class ReceivedPacket {
     public final Msg msg;
     public final InetAddress address;
     public final int port;
+    public final boolean isForwarded;
 
-    public ReceivedPacket(Msg msg, DatagramPacket packet) {
+    public ReceivedPacket(Msg msg, DatagramPacket packet, boolean isForwarded) {
         this.msg = msg;
         this.address = packet.getAddress();
         this.port = packet.getPort();
+        this.isForwarded = isForwarded;
     }
 }

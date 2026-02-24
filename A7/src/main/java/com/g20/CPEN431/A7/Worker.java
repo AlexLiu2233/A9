@@ -102,11 +102,7 @@ public class Worker extends Thread {
                 Node responsible = gossipService.getHashRing().getNodeForKey(request.getKey());
 
                 if (responsible != null && responsible.id != gossipService.getSelfNode().id) {
-                    // Only forward if the request came from a client (not from another node).
-                    // We detect "came from another node" by checking if the sender is a known
-                    // node in our membership. If so, process locally to prevent forwarding loops
-                    // caused by inconsistent hash rings across nodes.
-                    if (isFromKnownNode(packet)) {
+                    if (packet.isForwarded) {
                         // This was already forwarded to us — process locally to avoid loops
                         processLocally(packet, msg, request, command, messageId, messageIdBytes);
                     } else {
@@ -123,26 +119,6 @@ public class Worker extends Thread {
         } catch (Exception e) {
             e.printStackTrace();
         }
-    }
-
-    /**
-     * Check if a packet came from a known node in the cluster (i.e., was forwarded).
-     * This prevents forwarding loops when hash rings are inconsistent across nodes.
-     */
-    private boolean isFromKnownNode(ReceivedPacket packet) {
-        // Check if the sender address:port matches any known node
-        // Note: forwarded packets come from ephemeral ports, so we can't match by port.
-        // Instead, check if the sender IP matches any known node IP.
-        // This is a heuristic — in a multi-node-per-host setup it may be too broad,
-        // but it's safe (worst case: we process locally instead of forwarding).
-        String senderIp = packet.address.getHostAddress();
-        for (Node node : gossipService.getHashRing().getAllNodes()) {
-            if (node.ipaddress.getHostAddress().equals(senderIp)
-                    && node.id != gossipService.getSelfNode().id) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -190,10 +166,14 @@ public class Worker extends Thread {
             // Drain any stale responses left over from previous timed-out forwards
             drainStalePackets();
 
-            // Send the original serialized message to the target node
+            // Send the original serialized message to the target node,
+            // prefixed with forward magic so the receiver knows it's forwarded
             byte[] msgBytes = originalMsg.toByteArray();
+            byte[] forwardedBytes = new byte[Constants.FORWARD_MAGIC.length + msgBytes.length];
+            System.arraycopy(Constants.FORWARD_MAGIC, 0, forwardedBytes, 0, Constants.FORWARD_MAGIC.length);
+            System.arraycopy(msgBytes, 0, forwardedBytes, Constants.FORWARD_MAGIC.length, msgBytes.length);
             DatagramPacket forwardPacket = new DatagramPacket(
-                    msgBytes, msgBytes.length,
+                    forwardedBytes, forwardedBytes.length,
                     target.ipaddress, target.port
             );
             forwardSocket.send(forwardPacket);

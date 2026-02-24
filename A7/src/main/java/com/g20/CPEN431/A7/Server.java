@@ -108,15 +108,20 @@ public class Server {
                     continue;
                 }
 
-                // Client message - parse protobuf
+                // Check if this is a forwarded message (from another node)
+                boolean isForwarded = isForwardedMessage(buffer, packet.getLength());
+                int msgOffset = isForwarded ? FORWARD_MAGIC.length : 0;
+
+                // Parse protobuf (skip forward magic prefix if present)
                 Msg msg;
                 try {
-                    msg = Msg.parseFrom(ByteString.copyFrom(buffer, 0, packet.getLength()));
+                    msg = Msg.parseFrom(ByteString.copyFrom(
+                            buffer, msgOffset, packet.getLength() - msgOffset));
                 } catch (InvalidProtocolBufferException e) {
                     continue;
                 }
 
-                ReceivedPacket received = new ReceivedPacket(msg, packet);
+                ReceivedPacket received = new ReceivedPacket(msg, packet, isForwarded);
 
                 int workerIndex = Math.abs(msg.getMessageID().hashCode() % NUM_WORKERS);
                 Worker worker = workers[workerIndex];
@@ -160,6 +165,17 @@ public class Server {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Check if a packet starts with the forwarding magic prefix.
+     */
+    private static boolean isForwardedMessage(byte[] data, int length) {
+        if (length < FORWARD_MAGIC.length) return false;
+        return data[0] == FORWARD_MAGIC[0]
+                && data[1] == FORWARD_MAGIC[1]
+                && data[2] == FORWARD_MAGIC[2]
+                && data[3] == FORWARD_MAGIC[3];
     }
 
     public void stop() {
