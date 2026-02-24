@@ -1,0 +1,5 @@
+Loaded 3 nodes from test_nodes.txt
+Self node: id=0 addr=127.0.0.1:13400
+Server is running on port: 13400 (PID: 9728)
+[Gossip] Node 2 marked as FAILED
+[Gossip] Node 2 removed from membership list

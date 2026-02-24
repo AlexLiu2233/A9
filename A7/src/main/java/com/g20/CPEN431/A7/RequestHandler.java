@@ -12,7 +12,10 @@ public final class RequestHandler {
 
     private RequestHandler() {}
 
-    public static KVResponse processRequest(KVRequest request) {
+    /**
+     * Process a request, with access to gossip service for membership info.
+     */
+    public static KVResponse processRequest(KVRequest request, GossipService gossipService) {
         int command = request.getCommand();
 
         switch (command) {
@@ -31,7 +34,7 @@ public final class RequestHandler {
             case CMD_GET_PID:
                 return handleGetPid();
             case CMD_GET_MEMBERSHIP_COUNT:
-                return handleGetMembershipCount();
+                return handleGetMembershipCount(gossipService);
             default:
                 return buildKVResponse(ERR_UNKNOWN_COMMAND);
         }
@@ -100,8 +103,9 @@ public final class RequestHandler {
     }
 
     private static KVResponse handleShutdown() {
+        // Must exit immediately per spec - no cleanup, no gossip, just crash
         System.exit(0);
-        return buildKVResponse(ERR_SUCCESS);
+        return buildKVResponse(ERR_SUCCESS); // unreachable
     }
 
     private static KVResponse handleWipeout() {
@@ -114,17 +118,18 @@ public final class RequestHandler {
     }
 
     private static KVResponse handleGetPid() {
-        int pid = (int) ProcessHandle.current().pid();
+        // Use pre-computed PID from Main to avoid slow ProcessHandle calls under NetEm
         return KVResponse.newBuilder()
                 .setErrCode(ERR_SUCCESS)
-                .setPid(pid)
+                .setPid(Main.PID)
                 .build();
     }
 
-    private static KVResponse handleGetMembershipCount() {
+    private static KVResponse handleGetMembershipCount(GossipService gossipService) {
+        int count = gossipService != null ? gossipService.getAliveMemberCount() : 1;
         return KVResponse.newBuilder()
                 .setErrCode(ERR_SUCCESS)
-                .setMembershipCount(1)
+                .setMembershipCount(count)
                 .build();
     }
 }

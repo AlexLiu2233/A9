@@ -7,7 +7,9 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.SocketException;
+import java.util.List;
 
 import static com.g20.CPEN431.A7.Constants.*;
 import static com.g20.CPEN431.A7.MessageUtils.*;
@@ -18,15 +20,77 @@ public class Server {
     private final Worker[] workers;
     private volatile boolean running = true;
 
-    public Server(int port) throws SocketException {
+    private final GossipService gossipService;
+    private final Node selfNode;
+
+    public Server(int port, List<Node> allNodes) throws SocketException {
         this.socket = new DatagramSocket(port);
+
+        // Identify self from the node list
+        this.selfNode = findSelf(allNodes, port);
+        if (selfNode == null) {
+            throw new RuntimeException(
+                    "Could not find self in nodes list for port " + port
+                            + ". Make sure the nodes file contains this node's address.");
+        }
+        System.out.println("Self node: id=" + selfNode.id
+                + " addr=" + selfNode.ipaddress.getHostAddress() + ":" + selfNode.port);
+
+        // Initialize consistent hash ring and gossip service
+        ConsistentHashmap hashRing = new ConsistentHashmap(VIRTUAL_NODES);
+        this.gossipService = new GossipService(selfNode, socket, hashRing);
+        gossipService.addBootstrapNodes(allNodes);
+
+        // Create workers, passing gossip service for routing decisions
         this.workers = new Worker[NUM_WORKERS];
         for (int i = 0; i < NUM_WORKERS; i++) {
-            workers[i] = new Worker(i, this.socket);
+            workers[i] = new Worker(i, this.socket, gossipService);
         }
     }
 
+    /**
+     * Find our own Node object from the list by matching port and local addresses.
+     */
+    private Node findSelf(List<Node> allNodes, int port) {
+        try {
+            InetAddress localAddr = InetAddress.getLocalHost();
+            String localHostname = localAddr.getHostName();
+            String localIp = localAddr.getHostAddress();
+
+            for (Node node : allNodes) {
+                if (node.port != port) continue;
+
+                String nodeIp = node.ipaddress.getHostAddress();
+                String nodeHostname = node.ipaddress.getHostName();
+
+                // Match by IP, hostname, or loopback
+                if (nodeIp.equals(localIp)
+                        || nodeHostname.equals(localHostname)
+                        || node.ipaddress.isLoopbackAddress()
+                        || nodeIp.equals("127.0.0.1")
+                        || nodeIp.equals("0.0.0.0")) {
+                    return node;
+                }
+            }
+
+            // Fallback: if running locally with multiple processes, match by port only
+            // and pick the first node with this port
+            for (Node node : allNodes) {
+                if (node.port == port) {
+                    return node;
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error finding self node: " + e.getMessage());
+        }
+        return null;
+    }
+
     public void start() {
+        // Start gossip service
+        gossipService.start();
+
+        // Start worker threads
         for (Worker worker : workers) {
             worker.start();
         }
@@ -38,6 +102,13 @@ public class Server {
             try {
                 socket.receive(packet);
 
+                // Check if this is a gossip message (internal protocol)
+                if (GossipMessage.isGossipMessage(buffer, packet.getLength())) {
+                    handleGossipPacket(buffer, packet);
+                    continue;
+                }
+
+                // Client message - parse protobuf
                 Msg msg;
                 try {
                     msg = Msg.parseFrom(ByteString.copyFrom(buffer, 0, packet.getLength()));
@@ -54,7 +125,6 @@ public class Server {
                     if (!verifyChecksum(msg)) {
                         continue;
                     }
-//                    System.out.println("Overload: Worker Queues too small");
                     handleOverload(received, msg.getMessageID());
                 }
             } catch (IOException e) {
@@ -62,6 +132,20 @@ public class Server {
                     e.printStackTrace();
                 }
             }
+        }
+    }
+
+    /**
+     * Handle an incoming gossip packet on the server receive thread.
+     */
+    private void handleGossipPacket(byte[] buffer, DatagramPacket packet) {
+        try {
+            GossipMessage msg = GossipMessage.deserialize(buffer, packet.getLength());
+            if (msg != null) {
+                gossipService.handleGossipMessage(msg, packet.getAddress(), packet.getPort());
+            }
+        } catch (Exception e) {
+            System.err.println("Error handling gossip packet: " + e.getMessage());
         }
     }
 
@@ -80,6 +164,7 @@ public class Server {
 
     public void stop() {
         running = false;
+        gossipService.stop();
         for (Worker worker : workers) {
             worker.shutdown();
         }

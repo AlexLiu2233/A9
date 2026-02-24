@@ -46,8 +46,31 @@ public final class Constants {
     public static final long OPERATIONAL_RESERVE = 2 * 1024 * 1024;
     public static final long MEMORY_THRESHOLD_BYTES = QUEUE_MEMORY + CACHE_MEMORY + JVM_OVERHEAD + OPERATIONAL_RESERVE;
 
+    // ========================
+    // Gossip protocol settings
+    // ========================
+
+    /** How often to gossip with a random peer (ms) */
+    public static final long GOSSIP_INTERVAL_MS = 200;
+
+    /** How often to check for failed nodes (ms) */
+    public static final long GOSSIP_FAILURE_CHECK_INTERVAL_MS = 500;
+
+    /** Time without heartbeat update before marking a node as failed (ms) */
+    public static final long GOSSIP_T_FAIL_MS = 3000;
+
+    /** Time after failure before removing a node from the membership list entirely (ms).
+     *  Must be > T_FAIL to allow failure info to propagate. */
+    public static final long GOSSIP_T_CLEANUP_MS = 15000;
+
+    /** Number of virtual nodes per physical node on the hash ring */
+    public static final int VIRTUAL_NODES = 3;
+
+    /** Timeout for forwarded requests to other nodes (ms) */
+    public static final int FORWARD_TIMEOUT_MS = 500;
+
     public static boolean isMutableCommand(int command) {
         return command == CMD_PUT || command == CMD_REMOVE ||
-               command == CMD_WIPEOUT || command == CMD_GET_PID;
+                command == CMD_WIPEOUT || command == CMD_GET_PID;
     }
 }
