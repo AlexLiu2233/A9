@@ -23,19 +23,12 @@ public class Worker extends Thread {
     private final GossipService gossipService;
     private volatile boolean running = true;
 
-    // Dedicated socket for forwarding requests (so we can set a timeout)
-    private DatagramSocket forwardSocket;
-
     public Worker(int id, DatagramSocket socket, GossipService gossipService) throws SocketException {
         super("Worker-" + id);
         this.queue = new ArrayBlockingQueue<>(QUEUE_SIZE_PER_WORKER);
         this.cache = new DualResponseCache(MAX_CACHE_ENTRIES_PER_WORKER / 2, CACHE_CLEANUP_INTERVAL_MS);
         this.sendSocket = socket;
         this.gossipService = gossipService;
-
-        // Create a separate socket for forwarding with timeout
-        this.forwardSocket = new DatagramSocket();
-        this.forwardSocket.setSoTimeout(FORWARD_TIMEOUT_MS);
     }
 
     public boolean offer(ReceivedPacket packet) {
@@ -45,9 +38,6 @@ public class Worker extends Thread {
     public void shutdown() {
         running = false;
         this.interrupt();
-        if (forwardSocket != null && !forwardSocket.isClosed()) {
-            forwardSocket.close();
-        }
         sendSocket.close();
     }
 
@@ -101,7 +91,7 @@ public class Worker extends Thread {
 
                 if (responsible != null && responsible.id != gossipService.getSelfNode().id) {
                     // Forward to the responsible node
-                    forwardRequest(packet, msg, responsible);
+                    forwardRequest(packet, msg, request, command, messageId, messageIdBytes, responsible);
                     return;
                 }
             }
@@ -148,36 +138,93 @@ public class Worker extends Thread {
 
     /**
      * Forward a client request to the responsible node and relay the response back.
-     * If forwarding fails (timeout, error), return an error to the client so it can retry.
+     * Uses a fresh ephemeral socket per forward to avoid response mixups between
+     * concurrent forwarded requests. On failure, falls back to returning an error
+     * so the client can retry.
      */
-    private void forwardRequest(ReceivedPacket originalPacket, Msg originalMsg, Node target) {
+    private void forwardRequest(ReceivedPacket originalPacket, Msg originalMsg,
+                                KVRequest request, int command,
+                                ByteString messageId, byte[] messageIdBytes,
+                                Node target) {
+        DatagramSocket fwdSocket = null;
         try {
+            // Create a fresh socket for this specific forward to avoid response mixups
+            fwdSocket = new DatagramSocket();
+            fwdSocket.setSoTimeout(FORWARD_TIMEOUT_MS);
+
             // Send the original serialized message to the target node
             byte[] msgBytes = originalMsg.toByteArray();
             DatagramPacket forwardPacket = new DatagramPacket(
                     msgBytes, msgBytes.length,
                     target.ipaddress, target.port
             );
-            forwardSocket.send(forwardPacket);
+            fwdSocket.send(forwardPacket);
 
-            // Wait for response from target
+            // Wait for response from target, with message ID validation
             byte[] responseBuf = new byte[MAX_PACKET_SIZE];
             DatagramPacket responsePacket = new DatagramPacket(responseBuf, responseBuf.length);
-            forwardSocket.receive(responsePacket);
 
-            // Relay response back to the original client
-            DatagramPacket clientResponse = new DatagramPacket(
-                    responseBuf, responsePacket.getLength(),
-                    originalPacket.address, originalPacket.port
-            );
-            sendSocket.send(clientResponse);
+            // Retry loop: keep receiving until we get the matching response or timeout
+            long deadline = System.currentTimeMillis() + FORWARD_TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                int remaining = (int) (deadline - System.currentTimeMillis());
+                if (remaining <= 0) break;
+                fwdSocket.setSoTimeout(remaining);
+
+                fwdSocket.receive(responsePacket);
+
+                // Validate the response matches our request's message ID
+                try {
+                    Msg responseMsg = Msg.parseFrom(
+                            ByteString.copyFrom(responseBuf, 0, responsePacket.getLength()));
+
+                    if (responseMsg.getMessageID().equals(messageId)) {
+                        // Matching response - relay back to the original client
+                        DatagramPacket clientResponse = new DatagramPacket(
+                                responseBuf, responsePacket.getLength(),
+                                originalPacket.address, originalPacket.port
+                        );
+                        sendSocket.send(clientResponse);
+                        return; // Success
+                    }
+                    // Non-matching message ID - discard and keep waiting
+                } catch (InvalidProtocolBufferException e) {
+                    // Couldn't parse response - discard and keep waiting
+                }
+            }
+
+            // Timed out waiting for a matching response - send error to client
+            sendErrorToClient(originalPacket, messageId);
 
         } catch (java.net.SocketTimeoutException e) {
-            // Forward timed out - the target node might be down
-            // Let the client retry (don't send error, client will timeout and retry)
+            // Forward timed out - send error so client can retry
+            sendErrorToClient(originalPacket, messageId);
         } catch (IOException e) {
-            // Forward failed
+            // Forward failed - send error so client can retry
             System.err.println("Forward failed to node " + target.id + ": " + e.getMessage());
+            sendErrorToClient(originalPacket, messageId);
+        } finally {
+            if (fwdSocket != null && !fwdSocket.isClosed()) {
+                fwdSocket.close();
+            }
+        }
+    }
+
+    /**
+     * Send an overload/retry error back to the client when forwarding fails.
+     * This ensures the client gets a response and can retry, rather than
+     * silently dropping the request.
+     */
+    private void sendErrorToClient(ReceivedPacket originalPacket, ByteString messageId) {
+        try {
+            byte[] response = buildMsg(messageId, buildOverloadResponse());
+            DatagramPacket responsePacket = new DatagramPacket(
+                    response, response.length,
+                    originalPacket.address, originalPacket.port
+            );
+            sendSocket.send(responsePacket);
+        } catch (IOException ex) {
+            // Best effort - nothing more we can do
         }
     }
 
