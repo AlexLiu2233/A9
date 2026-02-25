@@ -1,0 +1,478 @@
+CPEN 431 EVALUATION Client
+Assignment ID: 7
+Client Version: 1
+Current Time: Wed Feb 25 08:43:03 UTC 2026
+Build Time: Tue Feb 24 21:58:52 UTC 2026
+Process ID: 13910
+OS Version: Linux 6.8.0-1045-aws amd64
+JVM Version: Ubuntu OpenJDK 64-Bit Server VM 25.0.2+10-Ubuntu-122.04
+Mode: SUBMIT
+Secret Code: 5409645920
+Process Command: java -Xmx6g -jar a7_2026_eval_tests_v1.jar --submit --servers-list servers.txt --secret-code 5409645920
+
+[Info] Done building nodes' list.
+[Info] Starting A7 Tests
+
+[Info] Correct submission information.
+[Info] Checking if the test client is running on AWS
+[Info] Detected instance type: c5.xlarge
+
+
+[Info] The deployment has 20 server nodes.
+
+[Info] Checking SSH connectivity to deployed servers ...
+Hosts to check: 3.84.203.175
+Checking SSH access to 3.84.203.175
+[Info] All SSH checks passed!
+
+[Info] Checking server deployment.
+Deployment information:
+c5.xlarge 
+ Ubuntu 22.04.5 LTS 
+ qdisc netem 8003: root refcnt 2 limit 1000 delay 5ms loss 2.5% 
+ qdisc netem 8004: root refcnt 5 limit 1000 delay 5ms loss 2.5% 
+ net-tools 1.60+git20181103.0eebece-1ubuntu5.4
+
+Sending GET PID to all servers (v2) ... 
+>>> Server node  3.84.203.175:43100 GETPID from server returned PID = 24926
+>>> Server node  3.84.203.175:43101 GETPID from server returned PID = 24927
+>>> Server node  3.84.203.175:43102 GETPID from server returned PID = 24928
+>>> Server node  3.84.203.175:43103 GETPID from server returned PID = 24929
+>>> Server node  3.84.203.175:43104 GETPID from server returned PID = 24930
+>>> Server node  3.84.203.175:43105 GETPID from server returned PID = 24931
+>>> Server node  3.84.203.175:43106 GETPID from server returned PID = 24932
+>>> Server node  3.84.203.175:43107 GETPID from server returned PID = 24933
+>>> Server node  3.84.203.175:43108 GETPID from server returned PID = 24936
+>>> Server node  3.84.203.175:43109 GETPID from server returned PID = 24937
+>>> Server node  3.84.203.175:43110 GETPID from server returned PID = 24939
+>>> Server node  3.84.203.175:43111 GETPID from server returned PID = 24940
+>>> Server node  3.84.203.175:43112 GETPID from server returned PID = 24942
+>>> Server node  3.84.203.175:43113 GETPID from server returned PID = 24946
+>>> Server node  3.84.203.175:43114 GETPID from server returned PID = 24952
+>>> Server node  3.84.203.175:43115 GETPID from server returned PID = 24953
+>>> Server node  3.84.203.175:43116 GETPID from server returned PID = 24956
+>>> Server node  3.84.203.175:43117 GETPID from server returned PID = 24961
+>>> Server node  3.84.203.175:43118 GETPID from server returned PID = 24962
+>>> Server node  3.84.203.175:43119 GETPID from server returned PID = 24964
+>>> Server node 3.84.203.175:43100 has process ID 24926.
+>>> Server node 3.84.203.175:43101 has process ID 24927.
+>>> Server node 3.84.203.175:43102 has process ID 24928.
+>>> Server node 3.84.203.175:43103 has process ID 24929.
+>>> Server node 3.84.203.175:43104 has process ID 24930.
+>>> Server node 3.84.203.175:43105 has process ID 24931.
+>>> Server node 3.84.203.175:43106 has process ID 24932.
+>>> Server node 3.84.203.175:43107 has process ID 24933.
+>>> Server node 3.84.203.175:43108 has process ID 24936.
+>>> Server node 3.84.203.175:43109 has process ID 24937.
+>>> Server node 3.84.203.175:43110 has process ID 24939.
+>>> Server node 3.84.203.175:43111 has process ID 24940.
+>>> Server node 3.84.203.175:43112 has process ID 24942.
+>>> Server node 3.84.203.175:43113 has process ID 24946.
+>>> Server node 3.84.203.175:43114 has process ID 24952.
+>>> Server node 3.84.203.175:43115 has process ID 24953.
+>>> Server node 3.84.203.175:43116 has process ID 24956.
+>>> Server node 3.84.203.175:43117 has process ID 24961.
+>>> Server node 3.84.203.175:43118 has process ID 24962.
+>>> Server node 3.84.203.175:43119 has process ID 24964.
+[ ... Completed in 31.687 seconds ]
+[OK]
+Testing memory usage 
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43100 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43101 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43102 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43103 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43104 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43105 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43106 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43107 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43108 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43109 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43110 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43111 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43112 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43113 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43114 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43115 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43116 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43117 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43118 has memory limit of 64M.
+Command information:
+c5.xlarge 
+ Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m Xmx64m
+>>> Server node 3.84.203.175:43119 has memory limit of 64M.
+[ ... Completed in 28.479 seconds ]
+[OK]
+
+[Test isAlive] for 127.0.0.1:43100
+Sending GETPID to all servers... 
+[Info] Server node 127.0.0.1:43100 has process ID 13474.
+[ ... Completed in 0.002 seconds ]
+[OK]
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.002 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST Basic PUT/GET (PUT -> GET). Value Length = 8 Bytes ]
+TEST_PASSED
+
+[ TEST Basic PUT/GET (PUT -> GET). Value Length = 32 Bytes ]
+TEST_PASSED
+
+[ TEST Basic PUT/GET (PUT -> GET). Value Length = 2048 Bytes ]
+TEST_PASSED
+
+[ TEST Basic PUT/GET (PUT -> GET). Value Length = 10000 Bytes ]
+TEST_PASSED
+
+
+[ TEST Basic KVS with message version (PUT Version 1 -> GET -> PUT Version 2 -> GET). Value Length = 8 Bytes ]
+TEST_PASSED
+
+
+[ TEST Basic KVS with message version (PUT Version 1 -> GET -> PUT Version 2 -> GET). Value Length = 32 Bytes ]
+TEST_PASSED
+
+
+[ TEST Basic KVS with message version (PUT Version 1 -> GET -> PUT Version 2 -> GET). Value Length = 2048 Bytes ]
+TEST_PASSED
+
+
+[ TEST Basic KVS with message version (PUT Version 1 -> GET -> PUT Version 2 -> GET). Value Length = 10000 Bytes ]
+TEST_PASSED
+
+[ TEST Basic REMOVE (PUT -> GET -> REM -> GET). Value Length = 32 Bytes. ]
+TEST_PASSED
+
+[ TEST Double remove (PUT -> REM -> REM). Value Length = 32 Bytes. ]
+TEST_PASSED
+
+[ TEST Invalid Command. ]
+TEST_PASSED
+
+[ TEST At-Most-Once Client Policy (PUT -> REM -> REM). Value length =  32 Bytes ]
+TEST_PASSED
+
+[ TEST At-Most-Once Client Policy Empty REMs (EMPTY -> REM -> REM) ]
+TEST_PASSED
+
+[ TEST At-Most-Once Client Policy Error Return Code (REM -> PUT -> REM) ]
+TEST_PASSED
+
+[ TEST At-Most-Once Client Policy (PUT -> REM -> many PUT -> REM). Value length =  32 Bytes ]
+Pausing for 10 seconds to wait for the cache to be cleared!
+TEST_PASSED
+
+[ TEST At-Most-Once Client Policy For PUTs (PUT1 -> PUT2 -> PUT1 -> GET2) ]
+TEST_PASSED
+
+[TEST Invalid Key ]
+TEST_PASSED
+
+[TEST Invalid Value ]
+TEST_PASSED
+
+[ TEST Single Front-End Performance (1 clients, 60.0 seconds): PUT -> GET (closed loop) ]
+[Test isAlive] for 127.0.0.1:43100
+[ ... Completed in 0.002 seconds ]
+Local Single node: Test Status: TEST_PASSED
+Clients: 1
+Total Requests (without replies): 850207
+Total Requests (including replies): 850207
+Successful Responses: 850207
+Timeout Responses: 0
+Total Failed Responses: 0
+% Success: 100.0
+% Timeout: 0.0
+% Failed: 0.0
+Response Time (Successful requests):
+[max] 18ms, [min] 0ms
+[avg] 0.05353166934640623 ms, [stdev] 0.2585861369930381ms
+Throughput: 14169.880501991633 requests per second
+Goodput: 14169.880501991633 requests per second
+Retry Rate (Successful requests): 1.0
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.001 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+[ ... TEST Completed in 65.482 seconds ]
+
+[ TEST Single Front-End Performance (16 clients, 60.0 seconds): PUT -> GET (closed loop) ]
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Test isAlive] for 127.0.0.1:43100
+[ ... Completed in 0.002 seconds ]
+Local Single node: Test Status: TEST_PASSED
+Clients: 16
+Total Requests (without replies): 2544933
+Total Requests (including replies): 2544933
+Successful Responses: 2544933
+Timeout Responses: 0
+Total Failed Responses: 0
+% Success: 100.0
+% Timeout: 0.0
+% Failed: 0.0
+Response Time (Successful requests):
+[max] 68ms, [min] 0ms
+[avg] 0.34694587244536496 ms, [stdev] 0.8748397624086566ms
+Throughput: 42414.84308594857 requests per second
+Goodput: 42414.84308594857 requests per second
+Retry Rate (Successful requests): 1.0
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.0 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+[ ... TEST Completed in 66.144 seconds ]
+
+[ TEST Single Front-End Performance (64 clients, 60.0 seconds): PUT -> GET (closed loop) ]
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Info] Received OVERLOAD from the server. Sleeping for [300] ms.
+[Test isAlive] for 127.0.0.1:43100
+[ ... Completed in 0.001 seconds ]
+Local Single node: Test Status: TEST_PASSED
+Clients: 64
+Total Requests (without replies): 2633289
+Total Requests (including replies): 2633289
+Successful Responses: 2633289
+Timeout Responses: 0
+Total Failed Responses: 0
+% Success: 100.0
+% Timeout: 0.0
+% Failed: 0.0
+Response Time (Successful requests):
+[max] 160ms, [min] 0ms
+[avg] 1.4219487492637535 ms, [stdev] 1.9269763367213282ms
+Throughput: 43886.68711042965 requests per second
+Goodput: 43886.68711042965 requests per second
+Retry Rate (Successful requests): 1.0
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.001 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+[ ... TEST Completed in 66.139 seconds ]
+
+[ TEST Single Client Capacity (Value Size = 500 bytes, Limit = 146800 PUTs, ~69.99969482421875 MiB) : PUT -> GET (closed loop) ]
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.001 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+ERROR_OUT_OF_SPACE
+Received error code after 94959 closed loops (~45.27997970581055 MiB).
+PUTs sent = 94959(~45.27997970581055 MiB) , Limit = 146800
+[Test isAlive]
+Test Passed. Server is ok.
+TEST_PASSED
+[Info] Shutting down local server(s)!
+[Test isAlive] for 127.0.0.1:43100
+[ ... Completed in 10.018 seconds ]
+[Info] Local tests completed in 253.017 seconds
+[Info] Finished tests for the local deployment!
+[Info] Collecting disk usage statistics on the server.
+Number of block devices on server: 1
+BlockDeviceName SectorSize SectorsRead SectorsWritten
+nvme0n1 512 1417855 2926410
+
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.009 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+[Test isAlive] for 3.84.203.175:43100
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.01 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST Basic PUT/GET (PUT -> GET). Value Length = 8 Bytes ]
+TEST_PASSED
+
+[ TEST Basic PUT/GET (PUT -> GET). Value Length = 32 Bytes ]
+TEST_PASSED
+
+[ TEST Basic PUT/GET (PUT -> GET). Value Length = 512 Bytes ]
+TEST_PASSED
+
+[ TEST Basic PUT/GET (PUT -> GET). Value Length = 1024 Bytes ]
+TEST_PASSED
+
+[ TEST Checksum verification ]
+Pausing for 10 seconds to wait for the cache to be cleared!
+Checksum verification passed!
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.011 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+
+[ TEST Basic KVS with message version (PUT Version 1 -> GET -> PUT Version 2 -> GET). Value Length = 8 Bytes ]
+TEST_PASSED
+
+
+[ TEST Basic KVS with message version (PUT Version 1 -> GET -> PUT Version 2 -> GET). Value Length = 32 Bytes ]
+TEST_PASSED
+
+
+[ TEST Basic KVS with message version (PUT Version 1 -> GET -> PUT Version 2 -> GET). Value Length = 512 Bytes ]
+TEST_PASSED
+
+
+[ TEST Basic KVS with message version (PUT Version 1 -> GET -> PUT Version 2 -> GET). Value Length = 1024 Bytes ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.009 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST Basic REMOVE (PUT -> GET -> REM -> GET). Value Length = 32 Bytes. ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.009 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST Double remove (PUT -> REM -> REM). Value Length = 32 Bytes. ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.009 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST Invalid Command. ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.009 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST At-Most-Once Client Policy (PUT -> REM -> REM). Value length =  32 Bytes ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.047 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST At-Most-Once Client Policy Empty REMs (EMPTY -> REM -> REM) ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.009 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST At-Most-Once Client Policy (PUT -> REM -> many PUT -> REM). Value length =  32 Bytes ]
+Pausing for 10 seconds to wait for the cache to be cleared!
+TEST_PASSED
+
+[ TEST At-Most-Once Client Policy Error Return Code (REM -> PUT -> REM) ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.047 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST At-Most-Once Client Policy For PUTs (PUT1 -> PUT2 -> PUT1 -> GET2) ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.01 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[TEST Invalid Key ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.009 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[TEST Invalid Value ]
+TEST_PASSED
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.009 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST Multi Client Crash: PUT -> GET (closed loop) + REM -> WIPEOUT (closed loop) ]
+[Test isAlive]
+Test Passed. Server is ok.
+TEST_PASSED
+[ ... TEST Completed in 88.075 seconds ]
+Sending WIPE-OUT to all servers...
+[ ... Completed in 0.009 seconds ]
+[OK]
+Waiting for 5 seconds for the cache to be cleared!
+
+[ TEST Random Front-End Basic (PUT -> GET -> REM -> REM -> GET). Value Length = 8 Bytes ]
+GET failed!
+TEST_FAILED
+[Error] Failed in Stage 0 basic distributed tests. Potentially buggy implementation. Aborting!
+Test aborted!
+Testing completed in 415.676s
