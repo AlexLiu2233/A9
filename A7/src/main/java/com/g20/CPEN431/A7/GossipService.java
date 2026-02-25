@@ -141,7 +141,6 @@ public class GossipService {
                 Thread.sleep(GOSSIP_FAILURE_CHECK_INTERVAL_MS);
                 if (!running) break;
 
-                long now = System.currentTimeMillis();
                 Iterator<Map.Entry<Integer, NodeStatus>> it = membershipList.entrySet().iterator();
 
                 while (it.hasNext()) {
@@ -152,11 +151,8 @@ public class GossipService {
                     // Don't check self
                     if (nodeId == selfNode.id) continue;
 
-                    if (status.isAlive() && status.isExpired(GOSSIP_T_FAIL_MS)) {
-                        // Mark as failed
-                        status.setAlive(false);
+                    if (status.markFailedIfExpired(GOSSIP_T_FAIL_MS, hashRing)) {
                         System.out.println("[Gossip] Node " + nodeId + " marked as FAILED");
-                        hashRing.removeNode(status.getNode());
                     } else if (status.isCleanupReady(GOSSIP_T_CLEANUP_MS)) {
                         // Remove from membership list entirely
                         it.remove();
@@ -220,12 +216,9 @@ public class GossipService {
                     System.out.println("[Gossip] Discovered new node " + entry.nodeId);
                 }
             } else {
-                // Existing node - update if incoming heartbeat is higher
-                boolean updated = existing.updateHeartbeat(entry.heartbeatCounter);
-                if (updated && !existing.isAlive()) {
-                    // Node was marked dead but now has a higher heartbeat - it's back!
-                    existing.setAlive(true);
-                    hashRing.addNode(existing.getNode());
+                // Existing node - atomically update heartbeat and detect rejoin
+                boolean rejoined = existing.updateHeartbeatAndRejoinIfDead(entry.heartbeatCounter, hashRing);
+                if (rejoined) {
                     System.out.println("[Gossip] Node " + entry.nodeId + " has REJOINED");
                 }
             }

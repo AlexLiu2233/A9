@@ -7,9 +7,9 @@ package com.g20.CPEN431.A7;
  */
 public class NodeStatus {
     private final Node node;
-    private long heartbeatCounter;
-    private long localTimestamp; // local time when we last saw an update
-    private boolean alive;
+    private volatile long heartbeatCounter;
+    private volatile long localTimestamp; // local time when we last saw an update
+    private volatile boolean alive;
 
     public NodeStatus(Node node, long heartbeatCounter) {
         this.node = node;
@@ -34,34 +34,42 @@ public class NodeStatus {
         return alive;
     }
 
-    public void setAlive(boolean alive) {
-        this.alive = alive;
-    }
-
     /**
-     * Update heartbeat if the incoming counter is higher.
-     * @return true if updated, false if stale
+     * Atomically update heartbeat and re-add to ring if this was a rejoin.
+     * Ring update is inside the lock to prevent the failure detector from
+     * removing the node between the alive flip and the ring add.
      */
-    public boolean updateHeartbeat(long incomingCounter) {
+    public synchronized boolean updateHeartbeatAndRejoinIfDead(long incomingCounter, ConsistentHashmap hashRing) {
         if (incomingCounter > this.heartbeatCounter) {
             this.heartbeatCounter = incomingCounter;
             this.localTimestamp = System.currentTimeMillis();
+            if (!this.alive) {
+                this.alive = true;
+                hashRing.addNode(this.node);
+                return true; // rejoin detected
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Atomically mark as failed and remove from ring if alive and expired.
+     * Ring update is inside the lock to prevent mergeEntries from re-adding
+     * the node between the alive flip and the ring remove.
+     */
+    public synchronized boolean markFailedIfExpired(long failureTimeoutMs, ConsistentHashmap hashRing) {
+        if (this.alive && System.currentTimeMillis() - this.localTimestamp > failureTimeoutMs) {
+            this.alive = false;
+            hashRing.removeNode(this.node);
             return true;
         }
         return false;
     }
 
     /**
-     * Check if this node should be considered failed based on timeout.
-     */
-    public boolean isExpired(long failureTimeoutMs) {
-        return System.currentTimeMillis() - localTimestamp > failureTimeoutMs;
-    }
-
-    /**
      * Check if this node has been dead long enough to be cleaned up.
      */
-    public boolean isCleanupReady(long cleanupTimeoutMs) {
+    public synchronized boolean isCleanupReady(long cleanupTimeoutMs) {
         return !alive && (System.currentTimeMillis() - localTimestamp > cleanupTimeoutMs);
     }
 }

@@ -7,9 +7,9 @@ public final class Constants {
     // Server configuration
     public static final int MAX_PACKET_SIZE = 16 * 1024;
     public static final int ESTIMATED_MAX_PACKET_SIZE = 11 * 1024; // Worst-case ReceivedPacket memory
-    public static final int NUM_WORKERS = Runtime.getRuntime().availableProcessors();
-    public static final int QUEUE_SIZE_PER_WORKER = 350 / NUM_WORKERS;
-    public static final int MAX_CACHE_ENTRIES_PER_WORKER = 70000 / NUM_WORKERS;
+    public static int NUM_WORKERS;
+    public static int QUEUE_SIZE_PER_WORKER;
+    public static int MAX_CACHE_ENTRIES_PER_WORKER;
     public static final long CACHE_TTL_MS = 2500;
     public static final long CACHE_CLEANUP_INTERVAL_MS = 1000;
     public static final int OVERLOAD_WAIT_TIME_MS = 300;
@@ -39,12 +39,30 @@ public final class Constants {
     public static final int MAX_VALUE_LENGTH = 10000;
 
     // Memory budget calculation
-    public static final long QUEUE_MEMORY = (long) NUM_WORKERS * QUEUE_SIZE_PER_WORKER * ESTIMATED_MAX_PACKET_SIZE;
+    public static long QUEUE_MEMORY;
     public static final long CACHE_ENTRY_SIZE = 18;
-    public static final long CACHE_MEMORY = (long) NUM_WORKERS * MAX_CACHE_ENTRIES_PER_WORKER * CACHE_ENTRY_SIZE;
+    public static long CACHE_MEMORY;
     public static final long JVM_OVERHEAD = 2 * 1024 * 1024;
     public static final long OPERATIONAL_RESERVE = 2 * 1024 * 1024;
-    public static final long MEMORY_THRESHOLD_BYTES = QUEUE_MEMORY + CACHE_MEMORY + JVM_OVERHEAD + OPERATIONAL_RESERVE;
+    public static long MEMORY_THRESHOLD_BYTES;
+
+    /**
+     * Initialize worker count and derived constants based on co-located node count.
+     * Must be called before creating the Server.
+     *
+     * @param nodesOnHost number of nodes sharing this host
+     */
+    public static void init(int nodesOnHost) {
+        NUM_WORKERS = Math.max(1, Runtime.getRuntime().availableProcessors() / nodesOnHost);
+        QUEUE_SIZE_PER_WORKER = 350 / NUM_WORKERS;
+        MAX_CACHE_ENTRIES_PER_WORKER = 70000 / NUM_WORKERS;
+        QUEUE_MEMORY = (long) NUM_WORKERS * QUEUE_SIZE_PER_WORKER * ESTIMATED_MAX_PACKET_SIZE;
+        CACHE_MEMORY = (long) NUM_WORKERS * MAX_CACHE_ENTRIES_PER_WORKER * CACHE_ENTRY_SIZE;
+        MEMORY_THRESHOLD_BYTES = QUEUE_MEMORY + CACHE_MEMORY + JVM_OVERHEAD + OPERATIONAL_RESERVE;
+        System.out.println("Constants: " + nodesOnHost + " nodes on host, "
+                + Runtime.getRuntime().availableProcessors() + " cores -> "
+                + NUM_WORKERS + " workers");
+    }
 
     // ========================
     // Gossip protocol settings

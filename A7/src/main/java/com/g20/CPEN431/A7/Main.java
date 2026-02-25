@@ -26,6 +26,8 @@ public class Main {
         List<Node> allNodes = parseNodesFile(nodesFile, port);
         System.out.println("Loaded " + allNodes.size() + " nodes from " + nodesFile);
 
+        Constants.init(allNodes.size());
+
         try {
             Server server = new Server(port, allNodes);
             System.out.println("Server is running on port: " + port + " (PID: " + PID + ")");
