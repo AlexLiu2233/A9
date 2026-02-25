@@ -46,7 +46,6 @@ public class NodeStatus {
         if (incomingCounter > this.heartbeatCounter) {
             this.heartbeatCounter = incomingCounter;
             this.localTimestamp = System.currentTimeMillis();
-            this.alive = true;
             return true;
         }
         return false;
