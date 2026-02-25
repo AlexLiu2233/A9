@@ -26,6 +26,13 @@ public class Server {
     public Server(int port, List<Node> allNodes) throws SocketException {
         this.socket = new DatagramSocket(port);
 
+        // Increase socket receive buffer to reduce packet drops under load
+        try {
+            socket.setReceiveBufferSize(4 * 1024 * 1024); // 4MB
+        } catch (SocketException e) {
+            // Best effort — OS may cap this
+        }
+
         // Identify self from the node list
         this.selfNode = findSelf(allNodes, port);
         if (selfNode == null) {
@@ -181,6 +188,7 @@ public class Server {
     public void stop() {
         running = false;
         gossipService.stop();
+        Worker.shutdownForwardPool();
         for (Worker worker : workers) {
             worker.shutdown();
         }

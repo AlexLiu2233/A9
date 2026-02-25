@@ -85,7 +85,10 @@ public final class Constants {
     public static final int VIRTUAL_NODES = 3;
 
     /** Timeout for forwarded requests to other nodes (ms) */
-    public static final int FORWARD_TIMEOUT_MS = 500;
+    public static final int FORWARD_TIMEOUT_MS = 200;
+
+    /** Number of threads in the forwarding pool */
+    public static final int FORWARD_POOL_SIZE = Math.max(8, NUM_WORKERS * 2);
 
     /** Magic bytes prefixed to forwarded UDP packets. First byte 0xFF has wire-type 7 in protobuf,
      *  which is invalid — so no valid protobuf message can start with this prefix. */

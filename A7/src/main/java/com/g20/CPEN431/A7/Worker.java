@@ -11,6 +11,8 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.SocketException;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static com.g20.CPEN431.A7.Constants.*;
 import static com.g20.CPEN431.A7.MessageUtils.*;
@@ -23,9 +25,9 @@ public class Worker extends Thread {
     private final GossipService gossipService;
     private volatile boolean running = true;
 
-    // Dedicated socket for forwarding requests (one per worker — workers are single-threaded
-    // so there's no multiplexing issue within a single worker)
-    private final DatagramSocket forwardSocket;
+    // Shared forwarding pool across all workers — non-blocking forwarding
+    private static volatile ExecutorService forwardPool;
+    private static final Object poolLock = new Object();
 
     public Worker(int id, DatagramSocket socket, GossipService gossipService) throws SocketException {
         super("Worker-" + id);
@@ -34,10 +36,18 @@ public class Worker extends Thread {
         this.sendSocket = socket;
         this.gossipService = gossipService;
 
-        // One forwarding socket per worker — safe because each worker processes
-        // requests sequentially (single thread), so only one forward is in-flight at a time
-        this.forwardSocket = new DatagramSocket();
-        this.forwardSocket.setSoTimeout(FORWARD_TIMEOUT_MS);
+        // Lazily create shared forwarding pool
+        if (forwardPool == null) {
+            synchronized (poolLock) {
+                if (forwardPool == null) {
+                    forwardPool = Executors.newFixedThreadPool(FORWARD_POOL_SIZE, r -> {
+                        Thread t = new Thread(r, "Forward-Pool");
+                        t.setDaemon(true);
+                        return t;
+                    });
+                }
+            }
+        }
     }
 
     public boolean offer(ReceivedPacket packet) {
@@ -47,10 +57,16 @@ public class Worker extends Thread {
     public void shutdown() {
         running = false;
         this.interrupt();
-        if (forwardSocket != null && !forwardSocket.isClosed()) {
-            forwardSocket.close();
+        // Don't close sendSocket here — Server.stop() handles it
+    }
+
+    public static void shutdownForwardPool() {
+        synchronized (poolLock) {
+            if (forwardPool != null) {
+                forwardPool.shutdownNow();
+                forwardPool = null;
+            }
         }
-        sendSocket.close();
     }
 
     @Override
@@ -106,8 +122,8 @@ public class Worker extends Thread {
                         // This was already forwarded to us — process locally to avoid loops
                         processLocally(packet, msg, request, command, messageId, messageIdBytes);
                     } else {
-                        // Client request — forward to the responsible node
-                        forwardRequest(packet, msg, messageId, responsible);
+                        // Client request — forward to the responsible node ASYNCHRONOUSLY
+                        forwardRequestAsync(packet, msg, messageId, responsible);
                     }
                     return;
                 }
@@ -154,100 +170,83 @@ public class Worker extends Thread {
     }
 
     /**
-     * Forward a client request to the responsible node and relay the response back.
-     * Uses the worker's dedicated forward socket. Since each worker is single-threaded,
-     * only one forward is in-flight at a time — no response mixup risk.
+     * Forward a client request to the responsible node ASYNCHRONOUSLY.
+     * The worker does NOT block — the forward is submitted to a thread pool.
+     * The forwarding thread handles the full round-trip and relays the response
+     * back to the original client.
      *
      * On failure, sends an overload error to the client so it can retry.
      */
-    private void forwardRequest(ReceivedPacket originalPacket, Msg originalMsg,
-                                ByteString messageId, Node target) {
-        try {
-            // Drain any stale responses left over from previous timed-out forwards
-            drainStalePackets();
-
-            // Send the original serialized message to the target node,
-            // prefixed with forward magic so the receiver knows it's forwarded
-            byte[] msgBytes = originalMsg.toByteArray();
-            byte[] forwardedBytes = new byte[Constants.FORWARD_MAGIC.length + msgBytes.length];
-            System.arraycopy(Constants.FORWARD_MAGIC, 0, forwardedBytes, 0, Constants.FORWARD_MAGIC.length);
-            System.arraycopy(msgBytes, 0, forwardedBytes, Constants.FORWARD_MAGIC.length, msgBytes.length);
-            DatagramPacket forwardPacket = new DatagramPacket(
-                    forwardedBytes, forwardedBytes.length,
-                    target.ipaddress, target.port
-            );
-            forwardSocket.send(forwardPacket);
-
-            // Wait for response from target with message ID validation
-            byte[] responseBuf = new byte[MAX_PACKET_SIZE];
-            DatagramPacket responsePacket = new DatagramPacket(responseBuf, responseBuf.length);
-
-            long deadline = System.currentTimeMillis() + FORWARD_TIMEOUT_MS;
-            while (System.currentTimeMillis() < deadline) {
-                int remaining = (int) (deadline - System.currentTimeMillis());
-                if (remaining <= 0) break;
-                forwardSocket.setSoTimeout(Math.max(remaining, 1));
-
-                forwardSocket.receive(responsePacket);
-
-                // Validate the response matches our request's message ID
-                try {
-                    Msg responseMsg = Msg.parseFrom(
-                            ByteString.copyFrom(responseBuf, 0, responsePacket.getLength()));
-
-                    if (responseMsg.getMessageID().equals(messageId)) {
-                        // Matching response — relay back to the original client
-                        DatagramPacket clientResponse = new DatagramPacket(
-                                responseBuf, responsePacket.getLength(),
-                                originalPacket.address, originalPacket.port
-                        );
-                        sendSocket.send(clientResponse);
-                        return; // Success
-                    }
-                    // Non-matching message ID — discard and keep waiting
-                } catch (InvalidProtocolBufferException e) {
-                    // Couldn't parse response — discard and keep waiting
-                }
-            }
-
-            // Timed out waiting for matching response — send error to client
-            sendErrorToClient(originalPacket, messageId);
-
-        } catch (java.net.SocketTimeoutException e) {
-            // Forward timed out
-            sendErrorToClient(originalPacket, messageId);
-        } catch (IOException e) {
-            System.err.println("Forward failed to node " + target.id + ": " + e.getMessage());
-            sendErrorToClient(originalPacket, messageId);
-        }
-    }
-
-    /**
-     * Drain any stale packets from the forward socket left over from previous
-     * timed-out forwards. Uses a very short timeout to avoid blocking.
-     */
-    private void drainStalePackets() {
-        try {
-            forwardSocket.setSoTimeout(1); // 1ms — just check if anything is buffered
-            byte[] drain = new byte[MAX_PACKET_SIZE];
-            DatagramPacket drainPacket = new DatagramPacket(drain, drain.length);
-            // Drain up to a few stale packets
-            for (int i = 0; i < 5; i++) {
-                try {
-                    forwardSocket.receive(drainPacket);
-                } catch (java.net.SocketTimeoutException e) {
-                    break; // Nothing more to drain
-                }
-            }
-        } catch (IOException e) {
-            // Ignore drain errors
-        } finally {
+    private void forwardRequestAsync(ReceivedPacket originalPacket, Msg originalMsg,
+                                     ByteString messageId, Node target) {
+        // Capture everything needed — worker moves on immediately
+        forwardPool.submit(() -> {
+            DatagramSocket fwdSocket = null;
             try {
-                forwardSocket.setSoTimeout(FORWARD_TIMEOUT_MS);
-            } catch (SocketException e) {
-                // Ignore
+                fwdSocket = new DatagramSocket();
+                fwdSocket.setSoTimeout(FORWARD_TIMEOUT_MS);
+
+                // Send the original serialized message to the target node,
+                // prefixed with forward magic so the receiver knows it's forwarded
+                byte[] msgBytes = originalMsg.toByteArray();
+                byte[] forwardedBytes = new byte[FORWARD_MAGIC.length + msgBytes.length];
+                System.arraycopy(FORWARD_MAGIC, 0, forwardedBytes, 0, FORWARD_MAGIC.length);
+                System.arraycopy(msgBytes, 0, forwardedBytes, FORWARD_MAGIC.length, msgBytes.length);
+                DatagramPacket forwardPacket = new DatagramPacket(
+                        forwardedBytes, forwardedBytes.length,
+                        target.ipaddress, target.port
+                );
+                fwdSocket.send(forwardPacket);
+
+                // Wait for response from target with message ID validation
+                byte[] responseBuf = new byte[MAX_PACKET_SIZE];
+                DatagramPacket responsePacket = new DatagramPacket(responseBuf, responseBuf.length);
+
+                long deadline = System.currentTimeMillis() + FORWARD_TIMEOUT_MS;
+                while (System.currentTimeMillis() < deadline) {
+                    int remaining = (int) (deadline - System.currentTimeMillis());
+                    if (remaining <= 0) break;
+                    fwdSocket.setSoTimeout(Math.max(remaining, 1));
+
+                    try {
+                        fwdSocket.receive(responsePacket);
+                    } catch (java.net.SocketTimeoutException e) {
+                        break; // timed out
+                    }
+
+                    // Validate the response matches our request's message ID
+                    try {
+                        Msg responseMsg = Msg.parseFrom(
+                                ByteString.copyFrom(responseBuf, 0, responsePacket.getLength()));
+
+                        if (responseMsg.getMessageID().equals(messageId)) {
+                            // Matching response — relay back to the original client
+                            DatagramPacket clientResponse = new DatagramPacket(
+                                    responseBuf, responsePacket.getLength(),
+                                    originalPacket.address, originalPacket.port
+                            );
+                            sendSocket.send(clientResponse);
+                            return; // Success
+                        }
+                        // Non-matching message ID — discard and keep waiting
+                    } catch (InvalidProtocolBufferException e) {
+                        // Couldn't parse response — discard and keep waiting
+                    }
+                }
+
+                // Timed out waiting for matching response — send error to client
+                sendErrorToClient(originalPacket, messageId);
+
+            } catch (java.net.SocketTimeoutException e) {
+                sendErrorToClient(originalPacket, messageId);
+            } catch (IOException e) {
+                sendErrorToClient(originalPacket, messageId);
+            } finally {
+                if (fwdSocket != null && !fwdSocket.isClosed()) {
+                    fwdSocket.close();
+                }
             }
-        }
+        });
     }
 
     /**
