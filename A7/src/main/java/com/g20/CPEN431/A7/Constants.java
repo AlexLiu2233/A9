@@ -8,7 +8,7 @@ public final class Constants {
     public static final int MAX_PACKET_SIZE = 16 * 1024;
     public static final int ESTIMATED_MAX_PACKET_SIZE = 11 * 1024; // Worst-case ReceivedPacket memory
     public static final int NUM_WORKERS = Runtime.getRuntime().availableProcessors();
-    public static final int QUEUE_SIZE_PER_WORKER = 350 / NUM_WORKERS;
+    public static final int QUEUE_SIZE_PER_WORKER = 2000 / NUM_WORKERS;
     public static final int MAX_CACHE_ENTRIES_PER_WORKER = 70000 / NUM_WORKERS;
     public static final long CACHE_TTL_MS = 2500;
     public static final long CACHE_CLEANUP_INTERVAL_MS = 1000;
@@ -67,7 +67,10 @@ public final class Constants {
     public static final int VIRTUAL_NODES = 3;
 
     /** Timeout for forwarded requests to other nodes (ms) */
-    public static final int FORWARD_TIMEOUT_MS = 500;
+    public static final int FORWARD_TIMEOUT_MS = 200;
+
+    /** Number of threads in the forwarding pool */
+    public static final int FORWARD_POOL_SIZE = Math.max(8, NUM_WORKERS * 2);
 
     /** Magic bytes prefixed to forwarded UDP packets. First byte 0xFF has wire-type 7 in protobuf,
      *  which is invalid — so no valid protobuf message can start with this prefix. */
