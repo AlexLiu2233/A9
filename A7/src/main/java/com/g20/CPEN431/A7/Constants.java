@@ -69,8 +69,9 @@ public final class Constants {
     /** Timeout for forwarded requests to other nodes (ms) */
     public static final int FORWARD_TIMEOUT_MS = 500;
 
-    /** Magic bytes prefixed to forwarded UDP packets to distinguish them from client requests */
-    public static final byte[] FORWARD_MAGIC = {(byte) 0xF0, (byte) 0x72, (byte) 0x57, (byte) 0x44};
+    /** Magic bytes prefixed to forwarded UDP packets. First byte 0xFF has wire-type 7 in protobuf,
+     *  which is invalid — so no valid protobuf message can start with this prefix. */
+    public static final byte[] FORWARD_MAGIC = {(byte) 0xFF, (byte) 0x72, (byte) 0x57, (byte) 0x44};
 
     public static boolean isMutableCommand(int command) {
         return command == CMD_PUT || command == CMD_REMOVE ||
