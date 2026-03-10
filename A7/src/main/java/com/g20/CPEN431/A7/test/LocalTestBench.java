@@ -1,4 +1,7 @@
-package com.g20.CPEN431.A7;
+package com.g20.CPEN431.A7.test;
+
+import com.g20.CPEN431.A7.network.Node;
+import com.g20.CPEN431.A7.Constants;
 
 import ca.NetSysLab.ProtocolBuffers.KeyValueRequest.KVRequest;
 import ca.NetSysLab.ProtocolBuffers.KeyValueResponse.KVResponse;

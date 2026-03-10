@@ -1,4 +1,11 @@
-package com.g20.CPEN431.A7;
+package com.g20.CPEN431.A7.network;
+
+import com.g20.CPEN431.A7.storage.ConsistentHashmap;
+import com.g20.CPEN431.A7.network.NodeStatus;
+import com.g20.CPEN431.A7.network.GossipMessage;
+import com.g20.CPEN431.A7.network.Node;
+import com.g20.CPEN431.A7.Main;
+import com.g20.CPEN431.A7.Constants;
 
 // -----------------------------------------------------------------------------
 // AI-GENERATED CODE ACKNOWLEDGEMENT

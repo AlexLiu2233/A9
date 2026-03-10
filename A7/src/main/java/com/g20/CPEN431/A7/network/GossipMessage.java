@@ -1,4 +1,4 @@
-package com.g20.CPEN431.A7;
+package com.g20.CPEN431.A7.network;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;

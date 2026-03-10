@@ -1,4 +1,14 @@
-package com.g20.CPEN431.A7;
+package com.g20.CPEN431.A7.server;
+
+import com.g20.CPEN431.A7.network.GossipService;
+import com.g20.CPEN431.A7.util.MessageUtils;
+import com.g20.CPEN431.A7.network.ReceivedPacket;
+import com.g20.CPEN431.A7.server.Server;
+import com.g20.CPEN431.A7.server.RequestHandler;
+import com.g20.CPEN431.A7.cache.ResponseCache;
+import com.g20.CPEN431.A7.cache.DualResponseCache;
+import com.g20.CPEN431.A7.network.Node;
+import com.g20.CPEN431.A7.Constants;
 
 import ca.NetSysLab.ProtocolBuffers.KeyValueRequest.KVRequest;
 import ca.NetSysLab.ProtocolBuffers.KeyValueResponse.KVResponse;
@@ -15,7 +25,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static com.g20.CPEN431.A7.Constants.*;
-import static com.g20.CPEN431.A7.MessageUtils.*;
+import static com.g20.CPEN431.A7.util.MessageUtils.*;
 
 // -----------------------------------------------------------------------------
 // AI-GENERATED CODE ACKNOWLEDGEMENT

@@ -1,4 +1,4 @@
-package com.g20.CPEN431.A7;
+package com.g20.CPEN431.A7.cache;
 
 /**
  * A fixed-length cache that stores two integers indexed by a bytestring key.
