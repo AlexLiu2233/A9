@@ -1,4 +1,6 @@
-package com.g20.CPEN431.A7;
+package com.g20.CPEN431.A7.util;
+
+import com.g20.CPEN431.A7.Constants;
 
 import ca.NetSysLab.ProtocolBuffers.KeyValueResponse.KVResponse;
 import ca.NetSysLab.ProtocolBuffers.Message.Msg;

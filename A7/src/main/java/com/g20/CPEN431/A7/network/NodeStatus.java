@@ -1,4 +1,7 @@
-package com.g20.CPEN431.A7;
+package com.g20.CPEN431.A7.network;
+
+import com.g20.CPEN431.A7.storage.ConsistentHashmap;
+import com.g20.CPEN431.A7.network.Node;
 
 /**
  * Tracks the gossip state for a single node.
