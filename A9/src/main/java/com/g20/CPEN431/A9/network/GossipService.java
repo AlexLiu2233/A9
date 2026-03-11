@@ -54,7 +54,6 @@ public class GossipService {
 
     private volatile boolean running = true;
     private Thread gossipThread;
-    private Thread failureDetectorThread;
 
     public GossipService(Node selfNode, DatagramSocket socket, ConsistentHashmap hashRing) {
         this.selfNode = selfNode;
@@ -79,16 +78,12 @@ public class GossipService {
     }
 
     /**
-     * Start the gossip and failure detection background threads.
+     * Start the gossip and failure detection background thread.
      */
     public void start() {
-        gossipThread = new Thread(this::gossipLoop, "Gossip-Thread");
+        gossipThread = new Thread(this::gossipAndFailureLoop, "Gossip-Thread");
         gossipThread.setDaemon(true);
         gossipThread.start();
-
-        failureDetectorThread = new Thread(this::failureDetectionLoop, "FailureDetector-Thread");
-        failureDetectorThread.setDaemon(true);
-        failureDetectorThread.start();
     }
 
     /**
@@ -97,38 +92,60 @@ public class GossipService {
     public void stop() {
         running = false;
         if (gossipThread != null) gossipThread.interrupt();
-        if (failureDetectorThread != null) failureDetectorThread.interrupt();
     }
 
     /**
-     * Main gossip loop: periodically sends push-pull messages to random peers.
+     * Combined gossip and failure detection loop.
+     * Gossip runs every GOSSIP_INTERVAL_MS. Failure detection runs when
+     * GOSSIP_FAILURE_CHECK_INTERVAL_MS has elapsed since the last check.
      */
-    private void gossipLoop() {
+    private void gossipAndFailureLoop() {
+        long lastFailureCheck = System.currentTimeMillis();
+
         while (running) {
             try {
                 Thread.sleep(GOSSIP_INTERVAL_MS);
                 if (!running) break;
 
-                // Increment our own heartbeat
+                // --- Gossip work ---
                 heartbeatCounter.incrementAndGet();
 
-                // Pick a random alive peer to gossip with
                 List<NodeStatus> alivePeers = getAlivePeers();
-                if (alivePeers.isEmpty()) continue;
+                if (!alivePeers.isEmpty()) {
+                    NodeStatus target = alivePeers.get(
+                            ThreadLocalRandom.current().nextInt(alivePeers.size()));
+                    sendGossipMessage(target.getNode(), GossipMessage.TYPE_PUSH_PULL);
 
-                NodeStatus target = alivePeers.get(
-                        ThreadLocalRandom.current().nextInt(alivePeers.size()));
+                    // Occasionally gossip with a random dead node (to detect rejoins)
+                    if (ThreadLocalRandom.current().nextDouble() < 0.2) {
+                        List<NodeStatus> deadPeers = getDeadPeers();
+                        if (!deadPeers.isEmpty()) {
+                            NodeStatus deadTarget = deadPeers.get(
+                                    ThreadLocalRandom.current().nextInt(deadPeers.size()));
+                            sendGossipMessage(deadTarget.getNode(), GossipMessage.TYPE_PUSH_PULL);
+                        }
+                    }
+                }
 
-                // Send push-pull message
-                sendGossipMessage(target.getNode(), GossipMessage.TYPE_PUSH_PULL);
+                // --- Failure detection (on interval) ---
+                long now = System.currentTimeMillis();
+                if (now - lastFailureCheck >= GOSSIP_FAILURE_CHECK_INTERVAL_MS) {
+                    lastFailureCheck = now;
 
-                // Occasionally gossip with a random dead node (to detect rejoins)
-                if (ThreadLocalRandom.current().nextDouble() < 0.2) {
-                    List<NodeStatus> deadPeers = getDeadPeers();
-                    if (!deadPeers.isEmpty()) {
-                        NodeStatus deadTarget = deadPeers.get(
-                                ThreadLocalRandom.current().nextInt(deadPeers.size()));
-                        sendGossipMessage(deadTarget.getNode(), GossipMessage.TYPE_PUSH_PULL);
+                    Iterator<Map.Entry<Integer, NodeStatus>> it = membershipList.entrySet().iterator();
+                    while (it.hasNext()) {
+                        Map.Entry<Integer, NodeStatus> entry = it.next();
+                        int nodeId = entry.getKey();
+                        NodeStatus status = entry.getValue();
+
+                        if (nodeId == selfNode.id) continue;
+
+                        if (status.markFailedIfExpired(GOSSIP_T_FAIL_MS, hashRing)) {
+                            System.out.println("[Gossip] Node " + nodeId + " marked as FAILED");
+                        } else if (status.isCleanupReady(GOSSIP_T_CLEANUP_MS)) {
+                            it.remove();
+                            System.out.println("[Gossip] Node " + nodeId + " removed from membership list");
+                        }
                     }
                 }
 
@@ -137,45 +154,6 @@ public class GossipService {
             } catch (Exception e) {
                 if (running) {
                     System.err.println("Gossip error: " + e.getMessage());
-                }
-            }
-        }
-    }
-
-    /**
-     * Failure detection loop: periodically checks for nodes that haven't
-     * had their heartbeat updated recently.
-     */
-    private void failureDetectionLoop() {
-        while (running) {
-            try {
-                Thread.sleep(GOSSIP_FAILURE_CHECK_INTERVAL_MS);
-                if (!running) break;
-
-                Iterator<Map.Entry<Integer, NodeStatus>> it = membershipList.entrySet().iterator();
-
-                while (it.hasNext()) {
-                    Map.Entry<Integer, NodeStatus> entry = it.next();
-                    int nodeId = entry.getKey();
-                    NodeStatus status = entry.getValue();
-
-                    // Don't check self
-                    if (nodeId == selfNode.id) continue;
-
-                    if (status.markFailedIfExpired(GOSSIP_T_FAIL_MS, hashRing)) {
-                        System.out.println("[Gossip] Node " + nodeId + " marked as FAILED");
-                    } else if (status.isCleanupReady(GOSSIP_T_CLEANUP_MS)) {
-                        // Remove from membership list entirely
-                        it.remove();
-                        System.out.println("[Gossip] Node " + nodeId + " removed from membership list");
-                    }
-                }
-
-            } catch (InterruptedException e) {
-                if (!running) break;
-            } catch (Exception e) {
-                if (running) {
-                    System.err.println("Failure detection error: " + e.getMessage());
                 }
             }
         }

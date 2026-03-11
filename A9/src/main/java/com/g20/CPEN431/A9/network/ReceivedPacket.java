@@ -12,10 +12,21 @@ public class ReceivedPacket {
     public final int port;
     public final boolean isForwarded;
 
+    // For forwarded requests: the original client to relay the response to
+    public final InetAddress originalClientAddress;
+    public final int originalClientPort;
+
     public ReceivedPacket(Msg msg, DatagramPacket packet, boolean isForwarded) {
+        this(msg, packet, isForwarded, null, 0);
+    }
+
+    public ReceivedPacket(Msg msg, DatagramPacket packet, boolean isForwarded,
+                          InetAddress originalClientAddress, int originalClientPort) {
         this.msg = msg;
         this.address = packet.getAddress();
         this.port = packet.getPort();
         this.isForwarded = isForwarded;
+        this.originalClientAddress = originalClientAddress;
+        this.originalClientPort = originalClientPort;
     }
 }

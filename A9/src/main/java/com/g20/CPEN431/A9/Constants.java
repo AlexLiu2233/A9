@@ -84,15 +84,19 @@ public final class Constants {
     /** Number of virtual nodes per physical node on the hash ring */
     public static final int VIRTUAL_NODES = 3;
 
-    /** Timeout for forwarded requests to other nodes (ms) */
-    public static final int FORWARD_TIMEOUT_MS = 200;
-
-    /** Number of threads in the forwarding pool */
-    public static final int FORWARD_POOL_SIZE = Math.max(8, NUM_WORKERS * 2);
-
-    /** Magic bytes prefixed to forwarded UDP packets. First byte 0xFF has wire-type 7 in protobuf,
-     *  which is invalid — so no valid protobuf message can start with this prefix. */
+    /** Magic bytes prefixed to forwarded UDP packets (A -> B).
+     *  First byte 0xFF has wire-type 7 in protobuf, which is invalid —
+     *  so no valid protobuf message can start with this prefix.
+     *  Full forward header: FORWARD_MAGIC(4) + clientIP(4) + clientPort(4) + Msg */
     public static final byte[] FORWARD_MAGIC = {(byte) 0xFF, (byte) 0x72, (byte) 0x57, (byte) 0x44};
+
+    /** Magic bytes prefixed to responses for forwarded requests (B -> A).
+     *  Full response header: RESPONSE_MAGIC(4) + clientIP(4) + clientPort(4) + response Msg */
+    public static final byte[] RESPONSE_MAGIC = {(byte) 0xFF, (byte) 0xA2, (byte) 0xB3, (byte) 0xC4};
+
+    /** Size of the forward/response header: 4 (magic) + 4 (IP) + 4 (port) */
+    public static final int FORWARD_HEADER_SIZE = 12;
+    public static final int RESPONSE_HEADER_SIZE = 12;
 
     public static boolean isMutableCommand(int command) {
         return command == CMD_PUT || command == CMD_REMOVE ||
