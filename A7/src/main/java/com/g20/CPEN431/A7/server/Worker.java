@@ -169,7 +169,8 @@ public class Worker extends Thread {
 
             // Check if there's space to cache before processing
             if (!cache.hasSpaceFor(messageIdBytes)) {
-                sendResponse(packet, buildMsg(messageId, buildOverloadResponse()));
+                System.err.println("[OVERLOAD-302] Cache full for msgId=" + messageId.hashCode());
+                sendResponse(packet, buildMsg(messageId, buildOverloadResponse(302)));
                 return;
             }
 
@@ -271,7 +272,8 @@ public class Worker extends Thread {
      */
     private void sendErrorToClient(ReceivedPacket originalPacket, ByteString messageId) {
         try {
-            byte[] response = buildMsg(messageId, buildOverloadResponse());
+            System.err.println("[OVERLOAD-303] Forward failed for msgId=" + messageId.hashCode());
+            byte[] response = buildMsg(messageId, buildOverloadResponse(303)); // forward failed
             DatagramPacket responsePacket = new DatagramPacket(
                     response, response.length,
                     originalPacket.address, originalPacket.port

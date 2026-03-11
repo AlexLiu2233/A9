@@ -179,7 +179,8 @@ public class Server {
 
     private void handleOverload(ReceivedPacket packet, ByteString messageId) {
         try {
-            byte[] response = buildMsg(messageId, buildOverloadResponse());
+            System.err.println("[OVERLOAD-301] Queue full for msgId=" + messageId.hashCode());
+            byte[] response = buildMsg(messageId, buildOverloadResponse(301));
             DatagramPacket responsePacket = new DatagramPacket(
                     response, response.length,
                     packet.address, packet.port

@@ -73,6 +73,19 @@ public final class MessageUtils {
         return OVERLOAD_RESPONSE;
     }
 
+    /**
+     * Build an overload response with a custom wait time that encodes the source.
+     *   301 = worker queue full (Server receive loop)
+     *   302 = response cache full (Worker.processLocally)
+     *   303 = forward timeout/failure (Worker.forwardRequestAsync)
+     */
+    public static KVResponse buildOverloadResponse(int waitTimeMs) {
+        return KVResponse.newBuilder()
+                .setErrCode(ERR_OVERLOAD)
+                .setOverloadWaitTime(waitTimeMs)
+                .build();
+    }
+
     public static KVResponse buildOutOfSpaceResponse() {
         return OUT_OF_SPACE_RESPONSE;
     }
