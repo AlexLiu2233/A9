@@ -25,9 +25,10 @@ import java.util.List;
  *     [4 bytes: IP address (as int)]
  *     [4 bytes: port]
  *     [8 bytes: heartbeat counter]
+ *     [8 bytes: generation (startup timestamp)]
  *     [1 byte: alive flag (1 = alive, 0 = dead)]
  *
- * Total per entry: 21 bytes
+ * Total per entry: 29 bytes
  * Header: 9 bytes
  */
 public class GossipMessage {
@@ -43,7 +44,7 @@ public class GossipMessage {
     public static final byte[] GOSSIP_MAGIC = new byte[]{(byte) 0xDE, (byte) 0x55, (byte) 0x1E, (byte) 0xAA};
 
     private static final int HEADER_SIZE = 1 + 4 + 4; // type + senderId + entryCount
-    private static final int ENTRY_SIZE = 4 + 4 + 4 + 8 + 1; // id + ip + port + heartbeat + alive
+    private static final int ENTRY_SIZE = 4 + 4 + 4 + 8 + 8 + 1; // id + ip + port + heartbeat + generation + alive
     private static final int MAGIC_SIZE = 4;
 
     private byte messageType;
@@ -68,8 +69,8 @@ public class GossipMessage {
         return entries;
     }
 
-    public void addEntry(int nodeId, int ipAsInt, int port, long heartbeatCounter, boolean alive) {
-        entries.add(new GossipEntry(nodeId, ipAsInt, port, heartbeatCounter, alive));
+    public void addEntry(int nodeId, int ipAsInt, int port, long heartbeatCounter, long generation, boolean alive) {
+        entries.add(new GossipEntry(nodeId, ipAsInt, port, heartbeatCounter, generation, alive));
     }
 
     /**
@@ -93,6 +94,7 @@ public class GossipMessage {
             buffer.putInt(entry.ipAsInt);
             buffer.putInt(entry.port);
             buffer.putLong(entry.heartbeatCounter);
+            buffer.putLong(entry.generation);
             buffer.put(entry.alive ? (byte) 1 : (byte) 0);
         }
 
@@ -135,8 +137,9 @@ public class GossipMessage {
             int ipAsInt = buffer.getInt();
             int port = buffer.getInt();
             long heartbeat = buffer.getLong();
+            long generation = buffer.getLong();
             boolean alive = buffer.get() == 1;
-            msg.addEntry(nodeId, ipAsInt, port, heartbeat, alive);
+            msg.addEntry(nodeId, ipAsInt, port, heartbeat, generation, alive);
         }
 
         return msg;
@@ -178,13 +181,15 @@ public class GossipMessage {
         public final int ipAsInt;
         public final int port;
         public final long heartbeatCounter;
+        public final long generation;
         public final boolean alive;
 
-        public GossipEntry(int nodeId, int ipAsInt, int port, long heartbeatCounter, boolean alive) {
+        public GossipEntry(int nodeId, int ipAsInt, int port, long heartbeatCounter, long generation, boolean alive) {
             this.nodeId = nodeId;
             this.ipAsInt = ipAsInt;
             this.port = port;
             this.heartbeatCounter = heartbeatCounter;
+            this.generation = generation;
             this.alive = alive;
         }
     }

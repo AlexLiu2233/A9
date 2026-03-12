@@ -68,22 +68,35 @@ public final class Constants {
     // Gossip protocol settings
     // ========================
 
+    /** Number of random peers to gossip with each cycle */
+    public static final int GOSSIP_FANOUT = 3;
+
     /** How often to gossip with a random peer (ms) */
     public static final long GOSSIP_INTERVAL_MS = 200;
 
     /** How often to check for failed nodes (ms) */
     public static final long GOSSIP_FAILURE_CHECK_INTERVAL_MS = 500;
 
-    /** Number of gossip cycles to wait at startup before the ring is considered stable.
-     *  Allows membership to converge from multiple peers before routing requests. */
-    public static final int GOSSIP_WARMUP_CYCLES = 3;
+    /** Minimum gossip cycles before the ring can be considered stable */
+    public static final int GOSSIP_WARMUP_MIN_CYCLES = 5;
 
-    /** Time without heartbeat update before marking a node as failed (ms) */
+    /** Ring size must be unchanged for this many consecutive cycles to be considered stable */
+    public static final int GOSSIP_WARMUP_STABLE_CYCLES = 3;
+
+    /** Time without heartbeat update before marking a node as SUSPECT (ms) */
     public static final long GOSSIP_T_FAIL_MS = 3000;
+
+    /** Time in SUSPECT state before confirming DEAD (ms).
+     *  Gives the node a chance to refute via a fresh heartbeat. */
+    public static final long GOSSIP_T_SUSPECT_MS = 2000;
 
     /** Time after failure before removing a node from the membership list entirely (ms).
      *  Must be > T_FAIL to allow failure info to propagate. */
     public static final long GOSSIP_T_CLEANUP_MS = 15000;
+
+    /** Maximum gossip entries per message to stay within UDP MTU (~1400 bytes).
+     *  Each entry is 29 bytes (includes 8-byte generation). Budget: (1400 - 13 header) / 29 ≈ 47 */
+    public static final int GOSSIP_MAX_ENTRIES = 47;
 
     /** Number of virtual nodes per physical node on the hash ring */
     public static final int VIRTUAL_NODES = 3;
@@ -161,6 +174,6 @@ public final class Constants {
 
     public static boolean isMutableCommand(int command) {
         return command == CMD_PUT || command == CMD_REMOVE ||
-                command == CMD_WIPEOUT || command == CMD_GET_PID;
+                command == CMD_WIPEOUT;
     }
 }

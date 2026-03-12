@@ -16,7 +16,6 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,6 +51,9 @@ public class GossipService {
     // Our own heartbeat counter
     private final AtomicLong heartbeatCounter = new AtomicLong(0);
 
+    // Our generation (startup timestamp) — distinguishes incarnations across restarts
+    private final long selfGeneration = System.currentTimeMillis();
+
     private volatile boolean running = true;
     private Thread gossipThread;
 
@@ -68,7 +70,9 @@ public class GossipService {
         this.hashRing = hashRing;
 
         // Add self to membership list and hash ring
-        membershipList.put(selfNode.id, new NodeStatus(selfNode, 0));
+        NodeStatus selfStatus = new NodeStatus(selfNode, 0, selfGeneration);
+        selfStatus.setOnRing(true);
+        membershipList.put(selfNode.id, selfStatus);
         hashRing.addNode(selfNode);
     }
 
@@ -86,7 +90,7 @@ public class GossipService {
     public void addBootstrapNodes(List<Node> nodes) {
         for (Node node : nodes) {
             if (node.id == selfNode.id) continue;
-            membershipList.putIfAbsent(node.id, new NodeStatus(node, 0));
+            membershipList.putIfAbsent(node.id, new NodeStatus(node, 0, 0));
         }
     }
 
@@ -122,27 +126,55 @@ public class GossipService {
      */
     private void gossipAndFailureLoop() {
         long lastFailureCheck = System.currentTimeMillis();
-        int warmupCyclesRemaining = GOSSIP_WARMUP_CYCLES;
+        int warmupCyclesElapsed = 0;
+        int stableCount = 0;
+        int lastRingSize = 0;
 
         while (running) {
             try {
                 Thread.sleep(GOSSIP_INTERVAL_MS);
                 if (!running) break;
 
-                // --- Warmup tracking ---
-                if (!ringStable && --warmupCyclesRemaining <= 0) {
-                    ringStable = true;
-                    System.out.println("[Gossip] Warmup complete — ring marked stable");
+                // --- Warmup tracking: ring stable when size stops changing ---
+                // Require at least one peer (size > 1) before declaring stable,
+                // unless we've run long enough to conclude we're a single-node cluster.
+                if (!ringStable) {
+                    warmupCyclesElapsed++;
+                    int currentRingSize = hashRing.size();
+                    if (currentRingSize == lastRingSize) {
+                        stableCount++;
+                    } else {
+                        stableCount = 0;
+                        lastRingSize = currentRingSize;
+                    }
+                    boolean sizeStable = warmupCyclesElapsed >= GOSSIP_WARMUP_MIN_CYCLES
+                            && stableCount >= GOSSIP_WARMUP_STABLE_CYCLES;
+                    boolean hasPeers = currentRingSize > 1;
+                    boolean likelySingleNode = warmupCyclesElapsed >= GOSSIP_WARMUP_MIN_CYCLES * 2;
+                    if (sizeStable && (hasPeers || likelySingleNode)) {
+                        ringStable = true;
+                        System.out.println("[Gossip] Warmup complete — ring marked stable ("
+                                + currentRingSize + " nodes)");
+                    }
                 }
 
                 // --- Gossip work ---
-                heartbeatCounter.incrementAndGet();
+                long hb = heartbeatCounter.incrementAndGet();
+
+                // Keep self entry in membership list up-to-date
+                NodeStatus selfStatus = membershipList.get(selfNode.id);
+                if (selfStatus != null) {
+                    selfStatus.updateSelfHeartbeat(hb);
+                }
 
                 List<NodeStatus> alivePeers = getAlivePeers();
                 if (!alivePeers.isEmpty()) {
-                    NodeStatus target = alivePeers.get(
-                            ThreadLocalRandom.current().nextInt(alivePeers.size()));
-                    sendGossipMessage(target.getNode(), GossipMessage.TYPE_PUSH_PULL);
+                    // Fanout: gossip to multiple random peers for faster convergence
+                    int fanout = Math.min(GOSSIP_FANOUT, alivePeers.size());
+                    java.util.Collections.shuffle(alivePeers);
+                    for (int i = 0; i < fanout; i++) {
+                        sendGossipMessage(alivePeers.get(i).getNode(), GossipMessage.TYPE_PUSH_PULL);
+                    }
 
                     // Occasionally gossip with a random dead node (to detect rejoins)
                     if (ThreadLocalRandom.current().nextDouble() < 0.2) {
@@ -160,19 +192,24 @@ public class GossipService {
                 if (now - lastFailureCheck >= GOSSIP_FAILURE_CHECK_INTERVAL_MS) {
                     lastFailureCheck = now;
 
-                    Iterator<Map.Entry<Integer, NodeStatus>> it = membershipList.entrySet().iterator();
-                    while (it.hasNext()) {
-                        Map.Entry<Integer, NodeStatus> entry = it.next();
+                    for (Map.Entry<Integer, NodeStatus> entry : membershipList.entrySet()) {
                         int nodeId = entry.getKey();
                         NodeStatus status = entry.getValue();
 
                         if (nodeId == selfNode.id) continue;
 
-                        if (status.markFailedIfExpired(GOSSIP_T_FAIL_MS, hashRing)) {
-                            System.out.println("[Gossip] Node " + nodeId + " marked as FAILED");
+                        if (status.markSuspectIfExpired(GOSSIP_T_FAIL_MS)) {
+                            System.out.println("[Gossip] Node " + nodeId + " marked as SUSPECT");
+                        } else if (status.confirmDeadIfSuspectExpired(GOSSIP_T_SUSPECT_MS, hashRing)) {
+                            System.out.println("[Gossip] Node " + nodeId + " confirmed DEAD");
                         } else if (status.isCleanupReady(GOSSIP_T_CLEANUP_MS)) {
-                            it.remove();
-                            System.out.println("[Gossip] Node " + nodeId + " removed from membership list");
+                            // Atomic removal: only remove if still DEAD (avoids race with
+                            // concurrent rejoin in mergeEntries on the network thread)
+                            NodeStatus newValue = membershipList.compute(nodeId, (k, v) ->
+                                    (v != null && v.isDead()) ? null : v);
+                            if (newValue == null) {
+                                System.out.println("[Gossip] Node " + nodeId + " removed from membership list");
+                            }
                         }
                     }
                 }
@@ -227,7 +264,8 @@ public class GossipService {
                 if (entry.alive) {
                     Node newNode = new Node(entry.nodeId,
                             GossipMessage.intToIp(entry.ipAsInt), entry.port);
-                    NodeStatus newStatus = new NodeStatus(newNode, entry.heartbeatCounter);
+                    NodeStatus newStatus = new NodeStatus(newNode, entry.heartbeatCounter, entry.generation);
+                    newStatus.setOnRing(true);
                     membershipList.put(entry.nodeId, newStatus);
                     hashRing.addNode(newNode);
                     System.out.println("[Gossip] Discovered new node " + entry.nodeId);
@@ -239,12 +277,23 @@ public class GossipService {
                     }
                 }
             } else {
-                // Existing node - atomically update heartbeat and detect rejoin
-                boolean rejoined = existing.updateHeartbeatAndRejoinIfDead(entry.heartbeatCounter, hashRing);
-                if (rejoined) {
-                    System.out.println("[Gossip] Node " + entry.nodeId + " has REJOINED");
-                    if (keyTransferService != null) {
-                        keyTransferService.onNodeRejoined(existing.getNode());
+                if (entry.alive) {
+                    // Existing node with alive report — update version and detect rejoin.
+                    // Uses (generation, heartbeat) comparison to reject stale gossip.
+                    boolean rejoined = existing.updateHeartbeatAndRejoinIfDead(
+                            entry.generation, entry.heartbeatCounter, hashRing);
+                    if (rejoined) {
+                        System.out.println("[Gossip] Node " + entry.nodeId + " has REJOINED");
+                        if (keyTransferService != null) {
+                            keyTransferService.onNodeRejoined(existing.getNode());
+                        }
+                    }
+                } else {
+                    // Existing node reported as dead by another peer — mark as SUSPECT.
+                    // The node stays on the hash ring during suspicion; if it doesn't
+                    // refute with a fresh heartbeat, it will be confirmed dead later.
+                    if (existing.markSuspectFromGossip(entry.generation, entry.heartbeatCounter)) {
+                        System.out.println("[Gossip] Node " + entry.nodeId + " marked SUSPECT via gossip");
                     }
                 }
             }
@@ -275,23 +324,33 @@ public class GossipService {
     private GossipMessage buildGossipMessage(byte messageType) {
         GossipMessage msg = new GossipMessage(messageType, selfNode.id);
 
-        // Add self with current heartbeat
+        // Always include self with current heartbeat and generation
         msg.addEntry(selfNode.id,
                 GossipMessage.ipToInt(selfNode.ipaddress),
                 selfNode.port,
                 heartbeatCounter.get(),
+                selfGeneration,
                 true);
 
-        // Add all known nodes
+        // Collect peer entries, shuffle and cap to avoid exceeding UDP MTU
+        List<Map.Entry<Integer, NodeStatus>> peers = new ArrayList<>();
         for (Map.Entry<Integer, NodeStatus> entry : membershipList.entrySet()) {
             if (entry.getKey() == selfNode.id) continue;
+            peers.add(entry);
+        }
+        java.util.Collections.shuffle(peers);
+        int limit = Math.min(peers.size(), GOSSIP_MAX_ENTRIES - 1); // -1 for self entry
+        for (int i = 0; i < limit; i++) {
+            Map.Entry<Integer, NodeStatus> entry = peers.get(i);
             NodeStatus status = entry.getValue();
+            long[] snapshot = status.getSnapshot(); // [heartbeat, alive, generation]
             msg.addEntry(
                     entry.getKey(),
                     GossipMessage.ipToInt(status.getNode().ipaddress),
                     status.getNode().port,
-                    status.getHeartbeatCounter(),
-                    status.isAlive()
+                    snapshot[0],
+                    snapshot[2],  // generation
+                    snapshot[1] == 1
             );
         }
 
@@ -299,12 +358,12 @@ public class GossipService {
     }
 
     /**
-     * Get the number of alive members (including self).
+     * Get the number of members on the ring (ALIVE or SUSPECT, including self).
      */
     public int getAliveMemberCount() {
         int count = 0;
         for (NodeStatus status : membershipList.values()) {
-            if (status.isAlive()) count++;
+            if (status.isOnRing()) count++;
         }
         return count;
     }
@@ -324,12 +383,14 @@ public class GossipService {
     }
 
     /**
-     * Get list of alive peers (excluding self).
+     * Get list of non-dead peers (ALIVE or SUSPECT), excluding self.
+     * Includes bootstrap nodes not yet on the ring, so gossip can confirm them.
+     * SUSPECT peers are included so we can potentially receive a fresh heartbeat.
      */
     private List<NodeStatus> getAlivePeers() {
         List<NodeStatus> peers = new ArrayList<>();
         for (Map.Entry<Integer, NodeStatus> entry : membershipList.entrySet()) {
-            if (entry.getKey() != selfNode.id && entry.getValue().isAlive()) {
+            if (entry.getKey() != selfNode.id && !entry.getValue().isDead()) {
                 peers.add(entry.getValue());
             }
         }
@@ -337,12 +398,12 @@ public class GossipService {
     }
 
     /**
-     * Get list of dead peers.
+     * Get list of confirmed-dead peers.
      */
     private List<NodeStatus> getDeadPeers() {
         List<NodeStatus> dead = new ArrayList<>();
         for (Map.Entry<Integer, NodeStatus> entry : membershipList.entrySet()) {
-            if (entry.getKey() != selfNode.id && !entry.getValue().isAlive()) {
+            if (entry.getKey() != selfNode.id && entry.getValue().isDead()) {
                 dead.add(entry.getValue());
             }
         }
