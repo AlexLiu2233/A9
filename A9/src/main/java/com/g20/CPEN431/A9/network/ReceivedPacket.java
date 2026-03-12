@@ -16,16 +16,20 @@ public class ReceivedPacket {
     public final InetAddress originalClientAddress;
     public final int originalClientPort;
 
-    // Number of forwarding hops this request has taken
+    // Multi-hop forwarding state
     public final int hopCount;
+    public final int senderNodeId;     // Node ID of the last forwarder (for loop-breaking)
+    public final byte[] hopChainBytes; // Raw hop chain [IP(4)+port(4)] * hopCount, for response routing
+
+    private static final byte[] EMPTY_CHAIN = new byte[0];
 
     public ReceivedPacket(Msg msg, DatagramPacket packet, boolean isForwarded) {
-        this(msg, packet, isForwarded, null, 0, 0);
+        this(msg, packet, isForwarded, null, 0, 0, 0, EMPTY_CHAIN);
     }
 
     public ReceivedPacket(Msg msg, DatagramPacket packet, boolean isForwarded,
                           InetAddress originalClientAddress, int originalClientPort,
-                          int hopCount) {
+                          int hopCount, int senderNodeId, byte[] hopChainBytes) {
         this.msg = msg;
         this.address = packet.getAddress();
         this.port = packet.getPort();
@@ -33,5 +37,7 @@ public class ReceivedPacket {
         this.originalClientAddress = originalClientAddress;
         this.originalClientPort = originalClientPort;
         this.hopCount = hopCount;
+        this.senderNodeId = senderNodeId;
+        this.hopChainBytes = hopChainBytes;
     }
 }

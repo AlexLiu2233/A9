@@ -94,13 +94,23 @@ public final class Constants {
      *  Full response header: RESPONSE_MAGIC(4) + clientIP(4) + clientPort(4) + response Msg */
     public static final byte[] RESPONSE_MAGIC = {(byte) 0xFF, (byte) 0xA2, (byte) 0xB3, (byte) 0xC4};
 
-    /** Size of the forward header: 4 (magic) + 4 (IP) + 4 (port) + 1 (hopCount) */
-    public static final int FORWARD_HEADER_SIZE = 13;
-    /** Size of the response header: 4 (magic) + 4 (IP) + 4 (port) */
-    public static final int RESPONSE_HEADER_SIZE = 12;
+    /** Forward header base: 4 magic + 4 clientIP + 4 clientPort + 1 hopCount + 4 senderNodeId */
+    public static final int FORWARD_HEADER_BASE_SIZE = 17;
+    /** Response header base: 4 magic + 4 clientIP + 4 clientPort + 1 chainLen */
+    public static final int RESPONSE_HEADER_BASE_SIZE = 13;
+    /** Size of one hop entry in the chain: 4 IP + 4 port */
+    public static final int HOP_ENTRY_SIZE = 8;
 
     /** Maximum number of forwarding hops before processing locally */
-    public static final int MAX_FORWARD_HOPS = 3;
+    public static final int MAX_FORWARD_HOPS = 15;
+
+    public static int forwardHeaderSize(int hopCount) {
+        return FORWARD_HEADER_BASE_SIZE + hopCount * HOP_ENTRY_SIZE;
+    }
+
+    public static int responseHeaderSize(int chainLen) {
+        return RESPONSE_HEADER_BASE_SIZE + chainLen * HOP_ENTRY_SIZE;
+    }
 
     // ========================
     // Key transfer protocol

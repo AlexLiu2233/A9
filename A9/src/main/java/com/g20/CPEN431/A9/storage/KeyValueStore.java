@@ -151,20 +151,18 @@ public class KeyValueStore {
     }
 
     /**
-     * Store raw bytes directly (version+value), with memory accounting.
-     * Used by key transfer receiver.
+     * Store raw bytes only if the key does NOT already exist (put-if-absent).
+     * Local writes (PUTs during recovery) always win over transferred data.
+     * Returns true if stored, false if key already existed.
      */
-    public static void putRawBytes(ByteString key, byte[] rawData) {
-        byte[] oldData = store.put(key, rawData);
-        int valueSize = rawData.length - 4; // rawData = 4-byte version + value
-        long newEntrySize = estimateEntrySize(key.size(), valueSize);
-        if (oldData != null) {
-            long oldValueSize = oldData.length;
-            long newValueSize = rawData.length;
-            bytesUsed.addAndGet(newValueSize - oldValueSize);
-        } else {
-            bytesUsed.addAndGet(newEntrySize);
+    public static boolean putIfAbsentRawBytes(ByteString key, byte[] rawData) {
+        byte[] existing = store.putIfAbsent(key, rawData);
+        if (existing != null) {
+            return false; // key already existed, transfer data ignored
         }
+        int valueSize = rawData.length - 4; // rawData = 4-byte version + value
+        bytesUsed.addAndGet(estimateEntrySize(key.size(), valueSize));
+        return true;
     }
 
 

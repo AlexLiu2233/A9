@@ -34,14 +34,12 @@ public class Server {
     public Server(int port, List<Node> allNodes) throws SocketException {
         this.socket = new DatagramSocket(port);
 
-        // Increase socket receive buffer to reduce packet drops under load
         try {
-            socket.setReceiveBufferSize(4 * 1024 * 1024); // 4MB
+            socket.setReceiveBufferSize(4 * 1024 * 1024);
         } catch (SocketException e) {
-            // Best effort — OS may cap this
+            // Best effort
         }
 
-        // Identify self from the node list
         this.selfNode = findSelf(allNodes, port);
         if (selfNode == null) {
             throw new RuntimeException(
@@ -51,25 +49,19 @@ public class Server {
         System.out.println("Self node: id=" + selfNode.id
                 + " addr=" + selfNode.ipaddress.getHostAddress() + ":" + selfNode.port);
 
-        // Initialize consistent hash ring and gossip service
         ConsistentHashmap hashRing = new ConsistentHashmap(VIRTUAL_NODES);
         this.gossipService = new GossipService(selfNode, socket, hashRing);
         gossipService.addBootstrapNodes(allNodes);
 
-        // Initialize key transfer service and wire to gossip
         this.keyTransferService = new KeyTransferService(selfNode, socket, hashRing);
         gossipService.setKeyTransferService(keyTransferService);
 
-        // Create workers
         this.workers = new Worker[NUM_WORKERS];
         for (int i = 0; i < NUM_WORKERS; i++) {
-            workers[i] = new Worker(i, this.socket, gossipService, keyTransferService);
+            workers[i] = new Worker(i, this.socket, gossipService, keyTransferService, selfNode);
         }
     }
 
-    /**
-     * Find our own Node object from the list by matching port and local addresses.
-     */
     private Node findSelf(List<Node> allNodes, int port) {
         try {
             InetAddress localAddr = InetAddress.getLocalHost();
@@ -78,11 +70,8 @@ public class Server {
 
             for (Node node : allNodes) {
                 if (node.port != port) continue;
-
                 String nodeIp = node.ipaddress.getHostAddress();
                 String nodeHostname = node.ipaddress.getHostName();
-
-                // Match by IP, hostname, or loopback
                 if (nodeIp.equals(localIp)
                         || nodeHostname.equals(localHostname)
                         || node.ipaddress.isLoopbackAddress()
@@ -91,13 +80,8 @@ public class Server {
                     return node;
                 }
             }
-
-            // Fallback: if running locally with multiple processes, match by port only
-            // and pick the first node with this port
             for (Node node : allNodes) {
-                if (node.port == port) {
-                    return node;
-                }
+                if (node.port == port) return node;
             }
         } catch (Exception e) {
             System.err.println("Error finding self node: " + e.getMessage());
@@ -106,13 +90,9 @@ public class Server {
     }
 
     public void start() {
-        // Start gossip service
         gossipService.start();
-
-        // Start key transfer service
         keyTransferService.start();
 
-        // Start worker threads
         for (Worker worker : workers) {
             worker.start();
         }
@@ -125,13 +105,11 @@ public class Server {
                 socket.receive(packet);
                 int len = packet.getLength();
 
-                // Check if this is a gossip message (internal protocol)
                 if (GossipMessage.isGossipMessage(buffer, len)) {
                     handleGossipPacket(buffer, packet);
                     continue;
                 }
 
-                // Check if this is a key transfer data packet
                 if (KeyTransferService.isKeyTransferMessage(buffer, len)) {
                     byte[] copy = new byte[len];
                     System.arraycopy(buffer, 0, copy, 0, len);
@@ -139,7 +117,6 @@ public class Server {
                     continue;
                 }
 
-                // Check if this is a transfer complete notification
                 if (KeyTransferService.isTransferCompleteMessage(buffer, len)) {
                     byte[] copy = new byte[len];
                     System.arraycopy(buffer, 0, copy, 0, len);
@@ -147,22 +124,24 @@ public class Server {
                     continue;
                 }
 
-                // Check if this is a response to a forwarded request (from target node)
                 if (isResponseMessage(buffer, len)) {
                     relayForwardResponse(buffer, len);
                     continue;
                 }
 
-                // Check if this is a forwarded request (from another node)
+                // Check if this is a forwarded request
                 boolean isForwarded = isForwardedMessage(buffer, len);
 
                 InetAddress originalClientAddress = null;
                 int originalClientPort = 0;
                 int hopCount = 0;
+                int senderNodeId = 0;
+                byte[] hopChainBytes = new byte[0];
                 int msgOffset = 0;
 
                 if (isForwarded) {
-                    // Extract original client IP, port, and hop count from forward header
+                    // Parse forward header:
+                    // FORWARD_MAGIC(4) + clientIP(4) + clientPort(4) + hopCount(1) + senderNodeId(4) + hopChain
                     originalClientAddress = InetAddress.getByAddress(new byte[]{
                             buffer[4], buffer[5], buffer[6], buffer[7]
                     });
@@ -171,49 +150,53 @@ public class Server {
                             | ((buffer[10] & 0xFF) << 8)
                             | (buffer[11] & 0xFF);
                     hopCount = buffer[12] & 0xFF;
-                    msgOffset = FORWARD_HEADER_SIZE;
+                    senderNodeId = ((buffer[13] & 0xFF) << 24)
+                            | ((buffer[14] & 0xFF) << 16)
+                            | ((buffer[15] & 0xFF) << 8)
+                            | (buffer[16] & 0xFF);
+
+                    int chainSize = hopCount * HOP_ENTRY_SIZE;
+                    hopChainBytes = new byte[chainSize];
+                    System.arraycopy(buffer, FORWARD_HEADER_BASE_SIZE, hopChainBytes, 0, chainSize);
+
+                    msgOffset = FORWARD_HEADER_BASE_SIZE + chainSize;
                 }
 
-                // Parse protobuf
                 Msg msg;
                 try {
-                    msg = Msg.parseFrom(ByteString.copyFrom(
-                            buffer, msgOffset, len - msgOffset));
+                    msg = Msg.parseFrom(ByteString.copyFrom(buffer, msgOffset, len - msgOffset));
                 } catch (InvalidProtocolBufferException e) {
                     continue;
                 }
 
-                // Route to worker
                 ReceivedPacket received = new ReceivedPacket(
                         msg, packet, isForwarded, originalClientAddress, originalClientPort,
-                        hopCount);
+                        hopCount, senderNodeId, hopChainBytes);
 
                 int workerIndex = Math.abs(msg.getMessageID().hashCode() % NUM_WORKERS);
                 Worker worker = workers[workerIndex];
 
                 if (!worker.offer(received)) {
-                    if (!verifyChecksum(msg)) {
-                        continue;
-                    }
+                    if (!verifyChecksum(msg)) continue;
                     handleOverload(received, msg.getMessageID());
                 }
 
             } catch (IOException e) {
-                if (running) {
-                    e.printStackTrace();
-                }
+                if (running) e.printStackTrace();
             }
         }
     }
 
     /**
-     * Relay a forward response directly to the original client.
-     * Extracts client IP/port from the RESPONSE_MAGIC header and sends
-     * the raw response (without the header) to the client.
+     * Relay a forward response through the hop chain back to the client.
+     *
+     * Response header: RESPONSE_MAGIC(4) + clientIP(4) + clientPort(4) + chainLen(1) + relay_chain + payload
+     *
+     * If chainLen == 0: relay directly to clientIP:clientPort.
+     * If chainLen > 0: pop the last relay entry, send to that address with chainLen-1.
      */
     private void relayForwardResponse(byte[] buffer, int length) {
         try {
-            // Extract original client IP and port from header
             InetAddress clientAddress = InetAddress.getByAddress(new byte[]{
                     buffer[4], buffer[5], buffer[6], buffer[7]
             });
@@ -221,24 +204,51 @@ public class Server {
                     | ((buffer[9] & 0xFF) << 16)
                     | ((buffer[10] & 0xFF) << 8)
                     | (buffer[11] & 0xFF);
+            int chainLen = buffer[12] & 0xFF;
+            int fullHeaderSize = responseHeaderSize(chainLen);
 
-            // Send the response payload (after the header) to the original client
-            int payloadOffset = RESPONSE_HEADER_SIZE;
-            int payloadLength = length - RESPONSE_HEADER_SIZE;
+            if (chainLen == 0) {
+                // Final hop: send directly to client
+                DatagramPacket responsePacket = new DatagramPacket(
+                        buffer, fullHeaderSize, length - fullHeaderSize,
+                        clientAddress, clientPort);
+                socket.send(responsePacket);
+            } else {
+                // Pop the last relay entry as the next hop
+                int lastEntryOffset = RESPONSE_HEADER_BASE_SIZE + (chainLen - 1) * HOP_ENTRY_SIZE;
+                InetAddress nextHop = InetAddress.getByAddress(new byte[]{
+                        buffer[lastEntryOffset], buffer[lastEntryOffset + 1],
+                        buffer[lastEntryOffset + 2], buffer[lastEntryOffset + 3]
+                });
+                int nextPort = ((buffer[lastEntryOffset + 4] & 0xFF) << 24)
+                        | ((buffer[lastEntryOffset + 5] & 0xFF) << 16)
+                        | ((buffer[lastEntryOffset + 6] & 0xFF) << 8)
+                        | (buffer[lastEntryOffset + 7] & 0xFF);
 
-            DatagramPacket responsePacket = new DatagramPacket(
-                    buffer, payloadOffset, payloadLength,
-                    clientAddress, clientPort
-            );
-            socket.send(responsePacket);
+                // Build new response with chainLen-1
+                int newChainLen = chainLen - 1;
+                int newHeaderSize = responseHeaderSize(newChainLen);
+                int payloadLen = length - fullHeaderSize;
+                byte[] newBuf = new byte[newHeaderSize + payloadLen];
+
+                // Copy magic + clientIP + clientPort (12 bytes)
+                System.arraycopy(buffer, 0, newBuf, 0, 12);
+                newBuf[12] = (byte) newChainLen;
+                // Copy remaining relay entries (all except the last one we just popped)
+                if (newChainLen > 0) {
+                    System.arraycopy(buffer, RESPONSE_HEADER_BASE_SIZE,
+                            newBuf, RESPONSE_HEADER_BASE_SIZE, newChainLen * HOP_ENTRY_SIZE);
+                }
+                // Copy payload
+                System.arraycopy(buffer, fullHeaderSize, newBuf, newHeaderSize, payloadLen);
+
+                socket.send(new DatagramPacket(newBuf, newBuf.length, nextHop, nextPort));
+            }
         } catch (IOException e) {
             // Best effort
         }
     }
 
-    /**
-     * Handle an incoming gossip packet on the server receive thread.
-     */
     private void handleGossipPacket(byte[] buffer, DatagramPacket packet) {
         try {
             GossipMessage msg = GossipMessage.deserialize(buffer, packet.getLength());
@@ -252,17 +262,18 @@ public class Server {
 
     /**
      * Handle overload when worker queue is full.
-     * For forwarded requests, the response must use RESPONSE_MAGIC so the
-     * forwarding node can relay it to the original client.
+     * Builds response with correct relay chain for multi-hop forwarded requests.
      */
     private void handleOverload(ReceivedPacket packet, ByteString messageId) {
         try {
-            System.err.println("[OVERLOAD-301] Queue full for msgId=" + messageId.hashCode());
             byte[] response = buildMsg(messageId, buildOverloadResponse(301));
 
             if (packet.isForwarded && packet.originalClientAddress != null) {
-                // Send with RESPONSE_MAGIC header so forwarding node relays to client
-                byte[] prefixed = new byte[RESPONSE_HEADER_SIZE + response.length];
+                // Build response header with relay chain
+                int chainLen = Math.max(0, packet.hopCount - 1);
+                int headerSize = responseHeaderSize(chainLen);
+                byte[] prefixed = new byte[headerSize + response.length];
+
                 System.arraycopy(RESPONSE_MAGIC, 0, prefixed, 0, 4);
                 byte[] clientIp = packet.originalClientAddress.getAddress();
                 System.arraycopy(clientIp, 0, prefixed, 4, 4);
@@ -271,41 +282,35 @@ public class Server {
                 prefixed[9] = (byte) (clientPort >> 16);
                 prefixed[10] = (byte) (clientPort >> 8);
                 prefixed[11] = (byte) clientPort;
-                System.arraycopy(response, 0, prefixed, RESPONSE_HEADER_SIZE, response.length);
+                prefixed[12] = (byte) chainLen;
+                // Copy relay chain (all hop entries except the last one)
+                if (chainLen > 0) {
+                    System.arraycopy(packet.hopChainBytes, 0, prefixed, RESPONSE_HEADER_BASE_SIZE,
+                            chainLen * HOP_ENTRY_SIZE);
+                }
+                System.arraycopy(response, 0, prefixed, headerSize, response.length);
 
-                DatagramPacket responsePacket = new DatagramPacket(
-                        prefixed, prefixed.length,
-                        packet.address, packet.port // Send to forwarding node
-                );
-                socket.send(responsePacket);
+                socket.send(new DatagramPacket(prefixed, prefixed.length,
+                        packet.address, packet.port));
             } else {
-                DatagramPacket responsePacket = new DatagramPacket(
-                        response, response.length,
-                        packet.address, packet.port
-                );
-                socket.send(responsePacket);
+                socket.send(new DatagramPacket(response, response.length,
+                        packet.address, packet.port));
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    /**
-     * Check if a packet starts with the forwarding magic prefix.
-     */
     private static boolean isForwardedMessage(byte[] data, int length) {
-        if (length < FORWARD_HEADER_SIZE) return false;
+        if (length < FORWARD_HEADER_BASE_SIZE) return false;
         return data[0] == FORWARD_MAGIC[0]
                 && data[1] == FORWARD_MAGIC[1]
                 && data[2] == FORWARD_MAGIC[2]
                 && data[3] == FORWARD_MAGIC[3];
     }
 
-    /**
-     * Check if a packet starts with the response magic prefix.
-     */
     private static boolean isResponseMessage(byte[] data, int length) {
-        if (length < RESPONSE_HEADER_SIZE) return false;
+        if (length < RESPONSE_HEADER_BASE_SIZE) return false;
         return data[0] == RESPONSE_MAGIC[0]
                 && data[1] == RESPONSE_MAGIC[1]
                 && data[2] == RESPONSE_MAGIC[2]

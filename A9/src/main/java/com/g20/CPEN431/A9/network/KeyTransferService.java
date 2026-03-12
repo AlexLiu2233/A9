@@ -11,7 +11,9 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -25,17 +27,18 @@ import static com.g20.CPEN431.A9.Constants.*;
  * Sender side: when gossip detects a predecessor rejoined, iterates the KV store
  * and sends keys that now map to the rejoined node.
  *
- * Receiver side: accepts key transfer packets, stores entries, and enters
- * recovery mode (forwarding GET/REMOVE misses to the recovery source).
+ * Receiver side: accepts key transfer packets, stores entries (put-if-absent),
+ * and enters recovery mode (forwarding GET/REMOVE misses to the recovery source).
  *
- * On startup, the node enters "awaitingRecovery" mode. During this state,
- * GET/REMOVE misses are forwarded to the ring successor (who held our keys
- * while we were down). This transitions to normal "recovering" when the first
- * key transfer packet arrives, or times out for clean bootstrap.
+ * Conflict resolution:
+ * - put-if-absent: local PUTs during recovery always win over transfer data
+ * - Tombstone set: REMOVEs seen during recovery prevent transfer from resurrecting keys
+ * - Loop-breaking: successor processes locally when the recovering node forwards to it
  */
 public class KeyTransferService {
 
     private static final int MAX_PACKET_PAYLOAD = 8192;
+    private static final long CLEANUP_INTERVAL_MS = 30_000;
 
     private final Node selfNode;
     private final DatagramSocket socket;
@@ -46,12 +49,19 @@ public class KeyTransferService {
     private final Thread transferThread;
     private final ScheduledExecutorService scheduler;
 
+    // Tracks nodes we are actively transferring to (or recently transferred to, during hold time).
+    // Used by Worker for loop-breaking: if a forwarded request's senderNodeId is in this set,
+    // and we have the key, process locally instead of forwarding back to the recovering node.
+    private final Set<Integer> activeTransferTargets = ConcurrentHashMap.newKeySet();
+
     // Receiver side: two-phase recovery
-    // Phase 1: awaitingRecovery (startup) — forward misses to ring successor
-    // Phase 2: recovering (transfer in progress) — forward misses to known recoverySource
     private volatile boolean awaitingRecovery = true;
     private volatile boolean recovering = false;
     private volatile Node recoverySource = null;
+
+    // Tombstone set: keys that were REMOVED locally during recovery.
+    // Transfer data for tombstoned keys is skipped to prevent resurrecting deleted keys.
+    private final Set<ByteString> tombstones = ConcurrentHashMap.newKeySet();
 
     private volatile boolean running = true;
 
@@ -78,6 +88,10 @@ public class KeyTransferService {
                 System.out.println("[KeyTransfer] Awaiting-recovery timeout — assuming clean bootstrap");
             }
         }, AWAITING_RECOVERY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+        // Schedule periodic cleanup of keys that no longer map to self
+        scheduler.scheduleWithFixedDelay(this::cleanupStaleKeys,
+                CLEANUP_INTERVAL_MS, CLEANUP_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
     public void stop() {
@@ -90,22 +104,16 @@ public class KeyTransferService {
     // Sender side
     // ========================
 
-    /**
-     * Called by GossipService when a node rejoin is detected.
-     * Queues the node for key transfer.
-     */
     public void onNodeRejoined(Node node) {
         if (node.id == selfNode.id) return;
         System.out.println("[KeyTransfer] Node " + node.id + " rejoined, queuing transfer");
+        activeTransferTargets.add(node.id);
         transferQueue.add(node);
         synchronized (transferQueue) {
             transferQueue.notify();
         }
     }
 
-    /**
-     * Background thread that processes the transfer queue sequentially.
-     */
     private void transferLoop() {
         while (running) {
             try {
@@ -136,11 +144,6 @@ public class KeyTransferService {
         }
     }
 
-    /**
-     * Execute the key transfer to the target node.
-     * Snapshots the ring, iterates the KV store, batches and sends keys
-     * that now map to the target.
-     */
     private void executeTransfer(Node target) {
         TreeMap<Integer, Node> snapshot = hashRing.getRingSnapshot();
 
@@ -158,7 +161,6 @@ public class KeyTransferService {
                 byte[] keyBytes = key.toByteArray();
                 int entrySize = 2 + keyBytes.length + 4 + rawData.length;
 
-                // Flush batch if adding this entry would exceed packet size
                 if (batchSize + entrySize > MAX_PACKET_PAYLOAD - KEY_TRANSFER_HEADER_SIZE
                         && !batchKeys.isEmpty()) {
                     sendKeyTransferPacket(target, batchKeys, batchRawData);
@@ -174,29 +176,24 @@ public class KeyTransferService {
             }
         }
 
-        // Send remaining batch
         if (!batchKeys.isEmpty()) {
             sendKeyTransferPacket(target, batchKeys, batchRawData);
         }
 
-        // Send transfer complete
         sendTransferComplete(target, transferredKeys.size());
 
         System.out.println("[KeyTransfer] Sent " + transferredKeys.size()
                 + " keys to node " + target.id);
 
-        // Schedule key deletion after hold time
         if (!transferredKeys.isEmpty()) {
-            scheduleKeyDeletion(transferredKeys);
+            scheduleKeyDeletion(transferredKeys, target.id);
+        } else {
+            // No keys to transfer — remove from active targets after a brief delay
+            scheduler.schedule(() -> activeTransferTargets.remove(target.id),
+                    RECOVERY_GRACE_PERIOD_MS, TimeUnit.MILLISECONDS);
         }
     }
 
-    /**
-     * Build and send a batched key transfer packet.
-     *
-     * Format: KEY_TRANSFER_MAGIC(4) | sender_node_id(4) | num_entries(2)
-     * Per entry: key_len(2) | key(var) | rawdata_len(4) | rawdata(var)
-     */
     private void sendKeyTransferPacket(Node target, List<byte[]> keys, List<byte[]> rawDataList) {
         int totalSize = KEY_TRANSFER_HEADER_SIZE;
         for (int i = 0; i < keys.size(); i++) {
@@ -209,47 +206,35 @@ public class KeyTransferService {
         buf.putShort((short) keys.size());
 
         for (int i = 0; i < keys.size(); i++) {
-            byte[] key = keys.get(i);
-            byte[] rawData = rawDataList.get(i);
-            buf.putShort((short) key.length);
-            buf.put(key);
-            buf.putInt(rawData.length);
-            buf.put(rawData);
+            buf.putShort((short) keys.get(i).length);
+            buf.put(keys.get(i));
+            buf.putInt(rawDataList.get(i).length);
+            buf.put(rawDataList.get(i));
         }
 
-        byte[] data = buf.array();
         try {
-            DatagramPacket packet = new DatagramPacket(data, data.length, target.ipaddress, target.port);
-            socket.send(packet);
+            byte[] data = buf.array();
+            socket.send(new DatagramPacket(data, data.length, target.ipaddress, target.port));
         } catch (IOException e) {
             System.err.println("[KeyTransfer] Failed to send transfer packet to node " + target.id);
         }
     }
 
-    /**
-     * Send transfer complete notification.
-     * Format: TRANSFER_COMPLETE_MAGIC(4) | sender_node_id(4) | total_keys(4)
-     */
     private void sendTransferComplete(Node target, int totalKeys) {
         ByteBuffer buf = ByteBuffer.allocate(TRANSFER_COMPLETE_SIZE);
         buf.put(TRANSFER_COMPLETE_MAGIC);
         buf.putInt(selfNode.id);
         buf.putInt(totalKeys);
 
-        byte[] data = buf.array();
         try {
-            DatagramPacket packet = new DatagramPacket(data, data.length, target.ipaddress, target.port);
-            socket.send(packet);
+            byte[] data = buf.array();
+            socket.send(new DatagramPacket(data, data.length, target.ipaddress, target.port));
         } catch (IOException e) {
             System.err.println("[KeyTransfer] Failed to send transfer complete to node " + target.id);
         }
     }
 
-    /**
-     * After TRANSFER_HOLD_TIME_MS, deletes transferred keys
-     * (re-checks ownership first to avoid deleting keys that should stay).
-     */
-    private void scheduleKeyDeletion(List<ByteString> keys) {
+    private void scheduleKeyDeletion(List<ByteString> keys, int targetNodeId) {
         scheduler.schedule(() -> {
             int deleted = 0;
             for (ByteString key : keys) {
@@ -259,8 +244,28 @@ public class KeyTransferService {
                     deleted++;
                 }
             }
-            System.out.println("[KeyTransfer] Cleaned up " + deleted + " transferred keys");
+            activeTransferTargets.remove(targetNodeId);
+            System.out.println("[KeyTransfer] Cleaned up " + deleted + " transferred keys for node " + targetNodeId);
         }, TRANSFER_HOLD_TIME_MS, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Background sweep: delete keys that no longer map to this node.
+     * Handles stale keys left over after ring changes.
+     */
+    private void cleanupStaleKeys() {
+        if (recovering || awaitingRecovery) return;
+        int deleted = 0;
+        for (Map.Entry<ByteString, byte[]> entry : KeyValueStore.entrySet()) {
+            Node owner = hashRing.getNodeForKey(entry.getKey());
+            if (owner != null && owner.id != selfNode.id) {
+                KeyValueStore.remove(entry.getKey());
+                deleted++;
+            }
+        }
+        if (deleted > 0) {
+            System.out.println("[KeyTransfer] Background cleanup removed " + deleted + " stale keys");
+        }
     }
 
     // ========================
@@ -269,8 +274,7 @@ public class KeyTransferService {
 
     /**
      * Handle an incoming key transfer packet.
-     * Parses entries and stores via putRawBytes.
-     * Transitions from awaitingRecovery to recovering on first packet.
+     * Skips keys that already exist locally (put-if-absent) or are tombstoned.
      */
     public void handleKeyTransferPacket(byte[] data, int length) {
         if (length < KEY_TRANSFER_HEADER_SIZE) return;
@@ -280,7 +284,7 @@ public class KeyTransferService {
         int senderId = buf.getInt();
         int numEntries = buf.getShort() & 0xFFFF;
 
-        // Transition: awaitingRecovery -> recovering with known source
+        // Transition: awaitingRecovery -> recovering
         if (!recovering) {
             for (Node n : hashRing.getAllNodes()) {
                 if (n.id == senderId) {
@@ -294,6 +298,7 @@ public class KeyTransferService {
         }
 
         int stored = 0;
+        int skipped = 0;
         for (int i = 0; i < numEntries; i++) {
             if (buf.remaining() < 2) break;
             int keyLen = buf.getShort() & 0xFFFF;
@@ -308,22 +313,30 @@ public class KeyTransferService {
             buf.get(rawData);
 
             ByteString key = ByteString.copyFrom(keyBytes);
-            KeyValueStore.putRawBytes(key, rawData);
-            stored++;
+
+            // Skip tombstoned keys (removed locally during recovery)
+            if (tombstones.contains(key)) {
+                skipped++;
+                continue;
+            }
+
+            // put-if-absent: local writes win over transfer data
+            if (KeyValueStore.putIfAbsentRawBytes(key, rawData)) {
+                stored++;
+            } else {
+                skipped++;
+            }
         }
 
-        System.out.println("[KeyTransfer] Received and stored " + stored + " keys from node " + senderId);
+        System.out.println("[KeyTransfer] Received " + (stored + skipped)
+                + " keys from node " + senderId + " (stored=" + stored + ", skipped=" + skipped + ")");
     }
 
-    /**
-     * Handle transfer complete notification.
-     * Schedules exit from recovery mode after RECOVERY_GRACE_PERIOD_MS.
-     */
     public void handleTransferComplete(byte[] data, int length) {
         if (length < TRANSFER_COMPLETE_SIZE) return;
 
         ByteBuffer buf = ByteBuffer.wrap(data, 0, length);
-        buf.position(4); // skip magic
+        buf.position(4);
         int senderId = buf.getInt();
         int totalKeys = buf.getInt();
 
@@ -333,25 +346,23 @@ public class KeyTransferService {
         scheduler.schedule(() -> {
             recovering = false;
             recoverySource = null;
-            System.out.println("[KeyTransfer] Recovery mode ended");
+            tombstones.clear();
+            System.out.println("[KeyTransfer] Recovery mode ended, tombstones cleared");
         }, RECOVERY_GRACE_PERIOD_MS, TimeUnit.MILLISECONDS);
     }
 
     /**
-     * Whether this node is currently in any recovery state
-     * (awaitingRecovery or actively recovering).
+     * Record that a key was REMOVED during recovery.
+     * Transfer data arriving for this key will be skipped.
      */
+    public void markRemovedDuringRecovery(ByteString key) {
+        tombstones.add(key);
+    }
+
     public boolean isRecovering() {
         return recovering || awaitingRecovery;
     }
 
-    /**
-     * Get the recovery source for a specific key.
-     * - During "recovering" phase: returns the known recoverySource node.
-     * - During "awaitingRecovery" phase: returns the ring successor for the key
-     *   (the node that held our keys while we were down).
-     * - Otherwise: returns null.
-     */
     public Node getRecoverySourceForKey(ByteString key) {
         if (recovering && recoverySource != null) {
             return recoverySource;
@@ -360,6 +371,14 @@ public class KeyTransferService {
             return hashRing.getSuccessorForKey(key, selfNode.id);
         }
         return null;
+    }
+
+    /**
+     * Whether this node is actively transferring keys to the given node.
+     * Used by Worker for loop-breaking.
+     */
+    public boolean isActiveTransferTarget(int nodeId) {
+        return activeTransferTargets.contains(nodeId);
     }
 
     // ========================

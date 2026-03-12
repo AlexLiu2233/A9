@@ -30,16 +30,18 @@ public class Worker extends Thread {
     private final DatagramSocket sendSocket;
     private final GossipService gossipService;
     private final KeyTransferService keyTransferService;
+    private final Node selfNode;
     private volatile boolean running = true;
 
     public Worker(int id, DatagramSocket socket, GossipService gossipService,
-                  KeyTransferService keyTransferService) throws SocketException {
+                  KeyTransferService keyTransferService, Node selfNode) throws SocketException {
         super("Worker-" + id);
         this.queue = new ArrayBlockingQueue<>(QUEUE_SIZE_PER_WORKER);
         this.cache = new DualResponseCache(MAX_CACHE_ENTRIES_PER_WORKER / 2, CACHE_CLEANUP_INTERVAL_MS);
         this.sendSocket = socket;
         this.gossipService = gossipService;
         this.keyTransferService = keyTransferService;
+        this.selfNode = selfNode;
     }
 
     public boolean offer(ReceivedPacket packet) {
@@ -69,9 +71,7 @@ public class Worker extends Thread {
         try {
             Msg msg = packet.msg;
 
-            if (!verifyChecksum(msg)) {
-                return;
-            }
+            if (!verifyChecksum(msg)) return;
 
             ByteString messageId = msg.getMessageID();
             byte[] messageIdBytes = messageId.toByteArray();
@@ -80,14 +80,13 @@ public class Worker extends Thread {
             try {
                 request = KVRequest.parseFrom(msg.getPayload());
             } catch (InvalidProtocolBufferException e) {
-                byte[] errorResponse = buildMsg(messageId, buildKVResponse(ERR_INTERNAL_FAILURE));
-                sendResponse(packet, errorResponse);
+                sendResponse(packet, buildMsg(messageId, buildKVResponse(ERR_INTERNAL_FAILURE)));
                 return;
             }
 
             int command = request.getCommand();
 
-            // Commands that are always handled locally (node-specific)
+            // Node-local commands: always process locally
             if (command == CMD_SHUTDOWN || command == CMD_WIPEOUT
                     || command == CMD_IS_ALIVE || command == CMD_GET_PID
                     || command == CMD_GET_MEMBERSHIP_COUNT) {
@@ -95,37 +94,59 @@ public class Worker extends Thread {
                 return;
             }
 
-            // For PUT, GET, REMOVE: check if we own this key
+            // For PUT, GET, REMOVE: check ring ownership
             if (request.hasKey() && !request.getKey().isEmpty()) {
-                Node responsible = gossipService.getHashRing().getNodeForKey(request.getKey());
+                ByteString key = request.getKey();
+                Node responsible = gossipService.getHashRing().getNodeForKey(key);
 
-                if (responsible != null && responsible.id != gossipService.getSelfNode().id) {
+                if (responsible != null && responsible.id != selfNode.id) {
+                    // Ring says another node owns this key.
+
+                    // Loop-breaking rule: if the sender is a recovering node that we're
+                    // actively transferring to, AND we have the key locally, process it
+                    // here. This breaks the A→C→A forwarding loop during recovery.
+                    if (packet.isForwarded
+                            && keyTransferService.isActiveTransferTarget(responsible.id)
+                            && packet.senderNodeId == responsible.id
+                            && (command == CMD_GET || command == CMD_REMOVE)
+                            && KeyValueStore.containsKey(key)) {
+                        // Tombstone REMOVE so transfer doesn't resurrect it
+                        if (command == CMD_REMOVE) {
+                            keyTransferService.markRemovedDuringRecovery(key);
+                        }
+                        processLocally(packet, msg, request, command, messageId, messageIdBytes);
+                        return;
+                    }
+
                     if (packet.hopCount >= MAX_FORWARD_HOPS) {
-                        // Max hops reached — process locally to prevent infinite loops
                         processLocally(packet, msg, request, command, messageId, messageIdBytes);
                     } else {
-                        // Forward to the responsible node (works for both direct and forwarded)
                         forwardWithHops(packet, msg, responsible);
                     }
                     return;
                 }
-            }
 
-            // During recovery: if this is a GET or REMOVE and the key is not in our store,
-            // forward to the recovery source which may still hold the key
-            if ((command == CMD_GET || command == CMD_REMOVE)
-                    && keyTransferService.isRecovering()
-                    && request.hasKey() && !KeyValueStore.containsKey(request.getKey())) {
-                if (packet.hopCount < MAX_FORWARD_HOPS) {
-                    Node recoverySource = keyTransferService.getRecoverySourceForKey(request.getKey());
-                    if (recoverySource != null) {
-                        forwardWithHops(packet, msg, recoverySource);
-                        return;
+                // We own this key. During recovery, handle GET/REMOVE misses.
+                if ((command == CMD_GET || command == CMD_REMOVE)
+                        && keyTransferService.isRecovering()
+                        && !KeyValueStore.containsKey(key)) {
+
+                    // Tombstone REMOVE so transfer doesn't resurrect it
+                    if (command == CMD_REMOVE) {
+                        keyTransferService.markRemovedDuringRecovery(key);
+                    }
+
+                    if (packet.hopCount < MAX_FORWARD_HOPS) {
+                        Node recoverySource = keyTransferService.getRecoverySourceForKey(key);
+                        if (recoverySource != null) {
+                            forwardWithHops(packet, msg, recoverySource);
+                            return;
+                        }
                     }
                 }
             }
 
-            // We own this key (or no key provided) - process locally
+            // We own this key (or no key) — process locally
             processLocally(packet, msg, request, command, messageId, messageIdBytes);
 
         } catch (Exception e) {
@@ -133,32 +154,22 @@ public class Worker extends Thread {
         }
     }
 
-    /**
-     * Process a request locally using the existing logic.
-     */
     private void processLocally(ReceivedPacket packet, Msg msg, KVRequest request,
                                 int command, ByteString messageId, byte[] messageIdBytes) throws IOException {
         if (isMutableCommand(command)) {
-            // Check cache for duplicate request
             KVResponse cachedResponse = cache.getResponse(messageIdBytes, command);
             if (cachedResponse != null) {
                 sendResponse(packet, buildMsg(messageId, cachedResponse));
                 return;
             }
 
-            // Check if there's space to cache before processing
             if (!cache.hasSpaceFor(messageIdBytes)) {
-                System.err.println("[OVERLOAD-302] Cache full for msgId=" + messageId.hashCode());
                 sendResponse(packet, buildMsg(messageId, buildOverloadResponse(302)));
                 return;
             }
 
-            // Process request
             KVResponse response = RequestHandler.processRequest(request, gossipService);
-
-            // Cache the response
             cache.put(messageIdBytes, response);
-
             sendResponse(packet, buildMsg(messageId, response));
         } else {
             KVResponse response = RequestHandler.processRequest(request, gossipService);
@@ -167,100 +178,134 @@ public class Worker extends Thread {
     }
 
     /**
-     * Unified forwarding method with hop count support.
-     * For direct client requests (hopCount=0): uses packet sender as client info, sets hopCount=1.
-     * For already-forwarded requests (hopCount>0): preserves original client info, increments hopCount.
+     * Forward with hop chain for stateless multi-hop response routing.
      *
-     * Header format: FORWARD_MAGIC(4) + clientIP(4) + clientPort(4) + hopCount(1) + Msg
+     * Forward header:
+     *   FORWARD_MAGIC(4) + clientIP(4) + clientPort(4) + hopCount(1) + senderNodeId(4)
+     *   + hop_chain(hopCount * 8) + Msg
+     *
+     * Each forwarder appends its own IP:port to the hop chain. The response unwinds
+     * through this chain: processor sends to last hop, each hop relays to the previous,
+     * until the first hop relays to the client.
      */
     private void forwardWithHops(ReceivedPacket packet, Msg msg, Node target) {
         try {
-            // Determine client info and hop count
             InetAddress clientAddr;
             int clientPort;
             int newHopCount;
+            byte[] newHopChain;
 
             if (packet.isForwarded) {
-                // Preserve original client info from the forwarded packet
                 clientAddr = packet.originalClientAddress;
                 clientPort = packet.originalClientPort;
                 newHopCount = packet.hopCount + 1;
+                // Append our own address to the existing hop chain
+                newHopChain = new byte[newHopCount * HOP_ENTRY_SIZE];
+                System.arraycopy(packet.hopChainBytes, 0, newHopChain, 0, packet.hopChainBytes.length);
+                writeHopEntry(newHopChain, packet.hopChainBytes.length);
             } else {
-                // Direct client request — use packet sender as client
                 clientAddr = packet.address;
                 clientPort = packet.port;
                 newHopCount = 1;
+                // Start hop chain with our own address
+                newHopChain = new byte[HOP_ENTRY_SIZE];
+                writeHopEntry(newHopChain, 0);
             }
 
+            int headerSize = forwardHeaderSize(newHopCount);
             byte[] msgBytes = msg.toByteArray();
-            byte[] forwardedBytes = new byte[FORWARD_HEADER_SIZE + msgBytes.length];
+            byte[] forwardedBytes = new byte[headerSize + msgBytes.length];
 
-            // Magic
+            // FORWARD_MAGIC
             System.arraycopy(FORWARD_MAGIC, 0, forwardedBytes, 0, 4);
 
-            // Client IP (4 bytes)
+            // Client IP
             byte[] clientIp = clientAddr.getAddress();
             System.arraycopy(clientIp, 0, forwardedBytes, 4, 4);
 
-            // Client port (4 bytes, big-endian)
+            // Client port (big-endian)
             forwardedBytes[8] = (byte) (clientPort >> 24);
             forwardedBytes[9] = (byte) (clientPort >> 16);
             forwardedBytes[10] = (byte) (clientPort >> 8);
             forwardedBytes[11] = (byte) clientPort;
 
-            // Hop count (1 byte)
+            // Hop count
             forwardedBytes[12] = (byte) newHopCount;
 
-            // Msg payload
-            System.arraycopy(msgBytes, 0, forwardedBytes, FORWARD_HEADER_SIZE, msgBytes.length);
+            // Sender node ID (this node's ID)
+            forwardedBytes[13] = (byte) (selfNode.id >> 24);
+            forwardedBytes[14] = (byte) (selfNode.id >> 16);
+            forwardedBytes[15] = (byte) (selfNode.id >> 8);
+            forwardedBytes[16] = (byte) selfNode.id;
 
-            DatagramPacket forwardPacket = new DatagramPacket(
-                    forwardedBytes, forwardedBytes.length,
-                    target.ipaddress, target.port
-            );
-            sendSocket.send(forwardPacket);
+            // Hop chain
+            System.arraycopy(newHopChain, 0, forwardedBytes, FORWARD_HEADER_BASE_SIZE, newHopChain.length);
+
+            // Msg payload
+            System.arraycopy(msgBytes, 0, forwardedBytes, headerSize, msgBytes.length);
+
+            sendSocket.send(new DatagramPacket(forwardedBytes, forwardedBytes.length,
+                    target.ipaddress, target.port));
         } catch (IOException e) {
-            // Best effort — if send fails, client will retry
+            // Best effort
         }
     }
 
     /**
-     * Send a response. For forwarded requests, prepend RESPONSE_MAGIC + client info
-     * so the forwarding node can relay the response to the original client.
+     * Write this node's IP:port into a hop chain buffer at the given offset.
+     */
+    private void writeHopEntry(byte[] chain, int offset) {
+        byte[] ip = selfNode.ipaddress.getAddress();
+        System.arraycopy(ip, 0, chain, offset, 4);
+        chain[offset + 4] = (byte) (selfNode.port >> 24);
+        chain[offset + 5] = (byte) (selfNode.port >> 16);
+        chain[offset + 6] = (byte) (selfNode.port >> 8);
+        chain[offset + 7] = (byte) selfNode.port;
+    }
+
+    /**
+     * Send response. For forwarded requests, builds RESPONSE_MAGIC header with
+     * relay chain so the response routes back through the forwarding path.
+     *
+     * Response header:
+     *   RESPONSE_MAGIC(4) + clientIP(4) + clientPort(4) + chainLen(1)
+     *   + relay_chain(chainLen * 8) + response
+     *
+     * The relay chain = hop chain minus the last entry (since we already send
+     * to packet.address, which is the last forwarder).
      */
     private void sendResponse(ReceivedPacket packet, byte[] response) throws IOException {
         if (packet.isForwarded && packet.originalClientAddress != null) {
-            // Prepend RESPONSE_MAGIC + client IP + client port
-            byte[] prefixed = new byte[RESPONSE_HEADER_SIZE + response.length];
+            int chainLen = Math.max(0, packet.hopCount - 1);
+            int headerSize = responseHeaderSize(chainLen);
+            byte[] prefixed = new byte[headerSize + response.length];
 
-            // Magic
             System.arraycopy(RESPONSE_MAGIC, 0, prefixed, 0, 4);
 
-            // Original client IP (4 bytes)
             byte[] clientIp = packet.originalClientAddress.getAddress();
             System.arraycopy(clientIp, 0, prefixed, 4, 4);
 
-            // Original client port (4 bytes, big-endian)
             int clientPort = packet.originalClientPort;
             prefixed[8] = (byte) (clientPort >> 24);
             prefixed[9] = (byte) (clientPort >> 16);
             prefixed[10] = (byte) (clientPort >> 8);
             prefixed[11] = (byte) clientPort;
 
-            // Response payload
-            System.arraycopy(response, 0, prefixed, RESPONSE_HEADER_SIZE, response.length);
+            prefixed[12] = (byte) chainLen;
 
-            DatagramPacket responsePacket = new DatagramPacket(
-                    prefixed, prefixed.length,
-                    packet.address, packet.port // Send to forwarding node
-            );
-            sendSocket.send(responsePacket);
+            // Relay chain: all hop entries except the last one
+            if (chainLen > 0) {
+                System.arraycopy(packet.hopChainBytes, 0, prefixed,
+                        RESPONSE_HEADER_BASE_SIZE, chainLen * HOP_ENTRY_SIZE);
+            }
+
+            System.arraycopy(response, 0, prefixed, headerSize, response.length);
+
+            sendSocket.send(new DatagramPacket(prefixed, prefixed.length,
+                    packet.address, packet.port));
         } else {
-            DatagramPacket responsePacket = new DatagramPacket(
-                    response, response.length,
-                    packet.address, packet.port
-            );
-            sendSocket.send(responsePacket);
+            sendSocket.send(new DatagramPacket(response, response.length,
+                    packet.address, packet.port));
         }
     }
 }
