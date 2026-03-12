@@ -13,6 +13,8 @@ import com.g20.CPEN431.A9.Constants;
 
 import com.google.protobuf.ByteString;
 
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -132,6 +134,37 @@ public class KeyValueStore {
     public static void clear() {
         store = new ConcurrentHashMap<>();
         bytesUsed.set(0);
+    }
+
+    /**
+     * Expose the entry set for scanning (used by key transfer).
+     */
+    public static Set<Map.Entry<ByteString, byte[]>> entrySet() {
+        return store.entrySet();
+    }
+
+    /**
+     * Get raw byte[] (version+value) without parsing, for key transfer.
+     */
+    public static byte[] getRawBytes(ByteString key) {
+        return store.get(key);
+    }
+
+    /**
+     * Store raw bytes directly (version+value), with memory accounting.
+     * Used by key transfer receiver.
+     */
+    public static void putRawBytes(ByteString key, byte[] rawData) {
+        byte[] oldData = store.put(key, rawData);
+        int valueSize = rawData.length - 4; // rawData = 4-byte version + value
+        long newEntrySize = estimateEntrySize(key.size(), valueSize);
+        if (oldData != null) {
+            long oldValueSize = oldData.length;
+            long newValueSize = rawData.length;
+            bytesUsed.addAndGet(newValueSize - oldValueSize);
+        } else {
+            bytesUsed.addAndGet(newEntrySize);
+        }
     }
 
 

@@ -94,9 +94,38 @@ public final class Constants {
      *  Full response header: RESPONSE_MAGIC(4) + clientIP(4) + clientPort(4) + response Msg */
     public static final byte[] RESPONSE_MAGIC = {(byte) 0xFF, (byte) 0xA2, (byte) 0xB3, (byte) 0xC4};
 
-    /** Size of the forward/response header: 4 (magic) + 4 (IP) + 4 (port) */
-    public static final int FORWARD_HEADER_SIZE = 12;
+    /** Size of the forward header: 4 (magic) + 4 (IP) + 4 (port) + 1 (hopCount) */
+    public static final int FORWARD_HEADER_SIZE = 13;
+    /** Size of the response header: 4 (magic) + 4 (IP) + 4 (port) */
     public static final int RESPONSE_HEADER_SIZE = 12;
+
+    /** Maximum number of forwarding hops before processing locally */
+    public static final int MAX_FORWARD_HOPS = 3;
+
+    // ========================
+    // Key transfer protocol
+    // ========================
+
+    /** Magic bytes for key transfer data packets */
+    public static final byte[] KEY_TRANSFER_MAGIC = {(byte) 0xFF, (byte) 0xD1, (byte) 0xE2, (byte) 0xF3};
+
+    /** Magic bytes for transfer complete notification */
+    public static final byte[] TRANSFER_COMPLETE_MAGIC = {(byte) 0xFF, (byte) 0xC1, (byte) 0xD2, (byte) 0xE3};
+
+    /** How long sender holds transferred keys before deleting (ms) */
+    public static final long TRANSFER_HOLD_TIME_MS = 10_000;
+
+    /** Delay before exiting recovery mode after transfer complete (ms) */
+    public static final long RECOVERY_GRACE_PERIOD_MS = 3_000;
+
+    /** Key transfer header: 4 magic + 4 senderId + 2 numEntries */
+    public static final int KEY_TRANSFER_HEADER_SIZE = 10;
+
+    /** Transfer complete size: 4 magic + 4 senderId + 4 totalKeys */
+    public static final int TRANSFER_COMPLETE_SIZE = 12;
+
+    /** Timeout for awaiting-recovery state: if no transfer arrives, assume clean bootstrap */
+    public static final long AWAITING_RECOVERY_TIMEOUT_MS = 15_000;
 
     public static boolean isMutableCommand(int command) {
         return command == CMD_PUT || command == CMD_REMOVE ||

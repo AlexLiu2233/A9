@@ -42,14 +42,18 @@ public class NodeStatus {
      * removing the node between the alive flip and the ring add.
      */
     public synchronized boolean updateHeartbeatAndRejoinIfDead(long incomingCounter, ConsistentHashmap hashRing) {
+        if (!this.alive) {
+            // Dead node: accept ANY heartbeat as proof of life.
+            // Restarted nodes begin at counter=0 which is lower than stored counter.
+            this.heartbeatCounter = incomingCounter;
+            this.localTimestamp = System.currentTimeMillis();
+            this.alive = true;
+            hashRing.addNode(this.node);
+            return true; // rejoin detected
+        }
         if (incomingCounter > this.heartbeatCounter) {
             this.heartbeatCounter = incomingCounter;
             this.localTimestamp = System.currentTimeMillis();
-            if (!this.alive) {
-                this.alive = true;
-                hashRing.addNode(this.node);
-                return true; // rejoin detected
-            }
         }
         return false;
     }

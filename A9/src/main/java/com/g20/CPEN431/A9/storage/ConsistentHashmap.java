@@ -197,6 +197,65 @@ public class ConsistentHashmap {
     }
 
     /**
+     * Get the next clockwise node for a key that isn't the given node.
+     * Used during recovery to find the successor (who held our keys while we were down).
+     */
+    public Node getSuccessorForKey(ByteString key, int selfId) {
+        int h = hash(key.toByteArray());
+
+        lock.readLock().lock();
+        try {
+            if (ring.isEmpty()) return null;
+
+            Map.Entry<Integer, Node> entry = ring.ceilingEntry(h);
+            if (entry == null) entry = ring.firstEntry();
+
+            // Walk clockwise until we find a node that isn't self
+            Integer startHash = entry.getKey();
+            do {
+                if (entry.getValue().id != selfId) {
+                    return entry.getValue();
+                }
+                entry = ring.higherEntry(entry.getKey());
+                if (entry == null) entry = ring.firstEntry();
+            } while (!entry.getKey().equals(startHash));
+
+            return null; // only self on ring
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Returns a snapshot (copy) of the ring under read lock.
+     */
+    public TreeMap<Integer, Node> getRingSnapshot() {
+        lock.readLock().lock();
+        try {
+            return new TreeMap<>(ring);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Lookup the responsible node for a key using a frozen ring snapshot.
+     */
+    public static Node getNodeForKeyFromSnapshot(byte[] keyBytes, TreeMap<Integer, Node> snapshot) {
+        if (snapshot.isEmpty()) return null;
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+            byte[] digest = md.digest(keyBytes);
+            int hash = ByteBuffer.wrap(digest, 0, 4).getInt();
+            Map.Entry<Integer, Node> entry = snapshot.ceilingEntry(hash);
+            if (entry == null) entry = snapshot.firstEntry();
+            return entry.getValue();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new RuntimeException("MD5 not available", e);
+        }
+    }
+
+    /**
      * Hash function using MD5
      */
     private int hash(String key) {

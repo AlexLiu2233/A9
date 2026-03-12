@@ -1,6 +1,7 @@
 package com.g20.CPEN431.A9.server;
 
 import com.g20.CPEN431.A9.network.GossipService;
+import com.g20.CPEN431.A9.network.KeyTransferService;
 import com.g20.CPEN431.A9.network.ReceivedPacket;
 import com.g20.CPEN431.A9.storage.ConsistentHashmap;
 import com.g20.CPEN431.A9.network.GossipMessage;
@@ -27,6 +28,7 @@ public class Server {
     private volatile boolean running = true;
 
     private final GossipService gossipService;
+    private final KeyTransferService keyTransferService;
     private final Node selfNode;
 
     public Server(int port, List<Node> allNodes) throws SocketException {
@@ -54,10 +56,14 @@ public class Server {
         this.gossipService = new GossipService(selfNode, socket, hashRing);
         gossipService.addBootstrapNodes(allNodes);
 
+        // Initialize key transfer service and wire to gossip
+        this.keyTransferService = new KeyTransferService(selfNode, socket, hashRing);
+        gossipService.setKeyTransferService(keyTransferService);
+
         // Create workers
         this.workers = new Worker[NUM_WORKERS];
         for (int i = 0; i < NUM_WORKERS; i++) {
-            workers[i] = new Worker(i, this.socket, gossipService);
+            workers[i] = new Worker(i, this.socket, gossipService, keyTransferService);
         }
     }
 
@@ -103,6 +109,9 @@ public class Server {
         // Start gossip service
         gossipService.start();
 
+        // Start key transfer service
+        keyTransferService.start();
+
         // Start worker threads
         for (Worker worker : workers) {
             worker.start();
@@ -122,6 +131,22 @@ public class Server {
                     continue;
                 }
 
+                // Check if this is a key transfer data packet
+                if (KeyTransferService.isKeyTransferMessage(buffer, len)) {
+                    byte[] copy = new byte[len];
+                    System.arraycopy(buffer, 0, copy, 0, len);
+                    keyTransferService.handleKeyTransferPacket(copy, len);
+                    continue;
+                }
+
+                // Check if this is a transfer complete notification
+                if (KeyTransferService.isTransferCompleteMessage(buffer, len)) {
+                    byte[] copy = new byte[len];
+                    System.arraycopy(buffer, 0, copy, 0, len);
+                    keyTransferService.handleTransferComplete(copy, len);
+                    continue;
+                }
+
                 // Check if this is a response to a forwarded request (from target node)
                 if (isResponseMessage(buffer, len)) {
                     relayForwardResponse(buffer, len);
@@ -133,10 +158,11 @@ public class Server {
 
                 InetAddress originalClientAddress = null;
                 int originalClientPort = 0;
+                int hopCount = 0;
                 int msgOffset = 0;
 
                 if (isForwarded) {
-                    // Extract original client IP and port from the extended header
+                    // Extract original client IP, port, and hop count from forward header
                     originalClientAddress = InetAddress.getByAddress(new byte[]{
                             buffer[4], buffer[5], buffer[6], buffer[7]
                     });
@@ -144,6 +170,7 @@ public class Server {
                             | ((buffer[9] & 0xFF) << 16)
                             | ((buffer[10] & 0xFF) << 8)
                             | (buffer[11] & 0xFF);
+                    hopCount = buffer[12] & 0xFF;
                     msgOffset = FORWARD_HEADER_SIZE;
                 }
 
@@ -158,7 +185,8 @@ public class Server {
 
                 // Route to worker
                 ReceivedPacket received = new ReceivedPacket(
-                        msg, packet, isForwarded, originalClientAddress, originalClientPort);
+                        msg, packet, isForwarded, originalClientAddress, originalClientPort,
+                        hopCount);
 
                 int workerIndex = Math.abs(msg.getMessageID().hashCode() % NUM_WORKERS);
                 Worker worker = workers[workerIndex];
@@ -287,6 +315,7 @@ public class Server {
     public void stop() {
         running = false;
         gossipService.stop();
+        keyTransferService.stop();
         for (Worker worker : workers) {
             worker.shutdown();
         }

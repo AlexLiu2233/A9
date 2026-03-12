@@ -55,6 +55,9 @@ public class GossipService {
     private volatile boolean running = true;
     private Thread gossipThread;
 
+    // Key transfer service (set after construction)
+    private volatile KeyTransferService keyTransferService;
+
     public GossipService(Node selfNode, DatagramSocket socket, ConsistentHashmap hashRing) {
         this.selfNode = selfNode;
         this.socket = socket;
@@ -63,6 +66,10 @@ public class GossipService {
         // Add self to membership list and hash ring
         membershipList.put(selfNode.id, new NodeStatus(selfNode, 0));
         hashRing.addNode(selfNode);
+    }
+
+    public void setKeyTransferService(KeyTransferService keyTransferService) {
+        this.keyTransferService = keyTransferService;
     }
 
     /**
@@ -209,6 +216,9 @@ public class GossipService {
                 boolean rejoined = existing.updateHeartbeatAndRejoinIfDead(entry.heartbeatCounter, hashRing);
                 if (rejoined) {
                     System.out.println("[Gossip] Node " + entry.nodeId + " has REJOINED");
+                    if (keyTransferService != null) {
+                        keyTransferService.onNodeRejoined(existing.getNode());
+                    }
                 }
             }
         }

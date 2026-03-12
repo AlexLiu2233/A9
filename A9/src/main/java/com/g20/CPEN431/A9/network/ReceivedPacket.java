@@ -16,17 +16,22 @@ public class ReceivedPacket {
     public final InetAddress originalClientAddress;
     public final int originalClientPort;
 
+    // Number of forwarding hops this request has taken
+    public final int hopCount;
+
     public ReceivedPacket(Msg msg, DatagramPacket packet, boolean isForwarded) {
-        this(msg, packet, isForwarded, null, 0);
+        this(msg, packet, isForwarded, null, 0, 0);
     }
 
     public ReceivedPacket(Msg msg, DatagramPacket packet, boolean isForwarded,
-                          InetAddress originalClientAddress, int originalClientPort) {
+                          InetAddress originalClientAddress, int originalClientPort,
+                          int hopCount) {
         this.msg = msg;
         this.address = packet.getAddress();
         this.port = packet.getPort();
         this.isForwarded = isForwarded;
         this.originalClientAddress = originalClientAddress;
         this.originalClientPort = originalClientPort;
+        this.hopCount = hopCount;
     }
 }

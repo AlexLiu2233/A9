@@ -1,9 +1,11 @@
 package com.g20.CPEN431.A9.server;
 
 import com.g20.CPEN431.A9.network.GossipService;
+import com.g20.CPEN431.A9.network.KeyTransferService;
 import com.g20.CPEN431.A9.network.ReceivedPacket;
 import com.g20.CPEN431.A9.cache.DualResponseCache;
 import com.g20.CPEN431.A9.network.Node;
+import com.g20.CPEN431.A9.storage.KeyValueStore;
 
 import ca.NetSysLab.ProtocolBuffers.KeyValueRequest.KVRequest;
 import ca.NetSysLab.ProtocolBuffers.KeyValueResponse.KVResponse;
@@ -14,6 +16,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.SocketException;
 import java.util.concurrent.ArrayBlockingQueue;
 
@@ -26,14 +29,17 @@ public class Worker extends Thread {
     private final DualResponseCache cache;
     private final DatagramSocket sendSocket;
     private final GossipService gossipService;
+    private final KeyTransferService keyTransferService;
     private volatile boolean running = true;
 
-    public Worker(int id, DatagramSocket socket, GossipService gossipService) throws SocketException {
+    public Worker(int id, DatagramSocket socket, GossipService gossipService,
+                  KeyTransferService keyTransferService) throws SocketException {
         super("Worker-" + id);
         this.queue = new ArrayBlockingQueue<>(QUEUE_SIZE_PER_WORKER);
         this.cache = new DualResponseCache(MAX_CACHE_ENTRIES_PER_WORKER / 2, CACHE_CLEANUP_INTERVAL_MS);
         this.sendSocket = socket;
         this.gossipService = gossipService;
+        this.keyTransferService = keyTransferService;
     }
 
     public boolean offer(ReceivedPacket packet) {
@@ -94,14 +100,28 @@ public class Worker extends Thread {
                 Node responsible = gossipService.getHashRing().getNodeForKey(request.getKey());
 
                 if (responsible != null && responsible.id != gossipService.getSelfNode().id) {
-                    if (packet.isForwarded) {
-                        // This was already forwarded to us — process locally to avoid loops
+                    if (packet.hopCount >= MAX_FORWARD_HOPS) {
+                        // Max hops reached — process locally to prevent infinite loops
                         processLocally(packet, msg, request, command, messageId, messageIdBytes);
                     } else {
-                        // Client request — forward to the responsible node
-                        forwardRequest(packet, msg, responsible);
+                        // Forward to the responsible node (works for both direct and forwarded)
+                        forwardWithHops(packet, msg, responsible);
                     }
                     return;
+                }
+            }
+
+            // During recovery: if this is a GET or REMOVE and the key is not in our store,
+            // forward to the recovery source which may still hold the key
+            if ((command == CMD_GET || command == CMD_REMOVE)
+                    && keyTransferService.isRecovering()
+                    && request.hasKey() && !KeyValueStore.containsKey(request.getKey())) {
+                if (packet.hopCount < MAX_FORWARD_HOPS) {
+                    Node recoverySource = keyTransferService.getRecoverySourceForKey(request.getKey());
+                    if (recoverySource != null) {
+                        forwardWithHops(packet, msg, recoverySource);
+                        return;
+                    }
                 }
             }
 
@@ -147,29 +167,49 @@ public class Worker extends Thread {
     }
 
     /**
-     * Forward a client request to the responsible node.
-     * Builds an extended forward prefix: FORWARD_MAGIC + client IP (4) + client port (4) + Msg.
-     * The receiving node echoes the client info back in its response using RESPONSE_MAGIC,
-     * so the forwarding node can relay the response statelessly.
+     * Unified forwarding method with hop count support.
+     * For direct client requests (hopCount=0): uses packet sender as client info, sets hopCount=1.
+     * For already-forwarded requests (hopCount>0): preserves original client info, increments hopCount.
+     *
+     * Header format: FORWARD_MAGIC(4) + clientIP(4) + clientPort(4) + hopCount(1) + Msg
      */
-    private void forwardRequest(ReceivedPacket originalPacket, Msg originalMsg, Node target) {
+    private void forwardWithHops(ReceivedPacket packet, Msg msg, Node target) {
         try {
-            byte[] msgBytes = originalMsg.toByteArray();
+            // Determine client info and hop count
+            InetAddress clientAddr;
+            int clientPort;
+            int newHopCount;
+
+            if (packet.isForwarded) {
+                // Preserve original client info from the forwarded packet
+                clientAddr = packet.originalClientAddress;
+                clientPort = packet.originalClientPort;
+                newHopCount = packet.hopCount + 1;
+            } else {
+                // Direct client request — use packet sender as client
+                clientAddr = packet.address;
+                clientPort = packet.port;
+                newHopCount = 1;
+            }
+
+            byte[] msgBytes = msg.toByteArray();
             byte[] forwardedBytes = new byte[FORWARD_HEADER_SIZE + msgBytes.length];
 
             // Magic
             System.arraycopy(FORWARD_MAGIC, 0, forwardedBytes, 0, 4);
 
             // Client IP (4 bytes)
-            byte[] clientIp = originalPacket.address.getAddress();
+            byte[] clientIp = clientAddr.getAddress();
             System.arraycopy(clientIp, 0, forwardedBytes, 4, 4);
 
             // Client port (4 bytes, big-endian)
-            int clientPort = originalPacket.port;
             forwardedBytes[8] = (byte) (clientPort >> 24);
             forwardedBytes[9] = (byte) (clientPort >> 16);
             forwardedBytes[10] = (byte) (clientPort >> 8);
             forwardedBytes[11] = (byte) clientPort;
+
+            // Hop count (1 byte)
+            forwardedBytes[12] = (byte) newHopCount;
 
             // Msg payload
             System.arraycopy(msgBytes, 0, forwardedBytes, FORWARD_HEADER_SIZE, msgBytes.length);
