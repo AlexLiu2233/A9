@@ -101,8 +101,8 @@ public final class Constants {
     /** Size of one hop entry in the chain: 4 IP + 4 port */
     public static final int HOP_ENTRY_SIZE = 8;
 
-    /** Maximum number of forwarding hops before processing locally */
-    public static final int MAX_FORWARD_HOPS = 15;
+    /** Maximum number of forwarding hops before dropping the packet */
+    public static final int MAX_FORWARD_HOPS = 10;
 
     public static int forwardHeaderSize(int hopCount) {
         return FORWARD_HEADER_BASE_SIZE + hopCount * HOP_ENTRY_SIZE;

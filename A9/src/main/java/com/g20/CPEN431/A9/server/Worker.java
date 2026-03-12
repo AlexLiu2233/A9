@@ -119,7 +119,8 @@ public class Worker extends Thread {
                     }
 
                     if (packet.hopCount >= MAX_FORWARD_HOPS) {
-                        processLocally(packet, msg, request, command, messageId, messageIdBytes);
+                        // Drop — client will retry after gossip converges
+                        return;
                     } else {
                         forwardWithHops(packet, msg, responsible);
                     }
