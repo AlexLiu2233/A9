@@ -94,6 +94,12 @@ public class Worker extends Thread {
                 return;
             }
 
+            // During gossip warmup, drop KV requests — ring hasn't stabilized yet.
+            // Clients will retry after the brief warmup period (~600ms).
+            if (!gossipService.isRingStable()) {
+                return;
+            }
+
             // For PUT, GET, REMOVE: check ring ownership
             if (request.hasKey() && !request.getKey().isEmpty()) {
                 ByteString key = request.getKey();
@@ -103,18 +109,22 @@ public class Worker extends Thread {
                     // Ring says another node owns this key.
 
                     // Loop-breaking rule: if the sender is a recovering node that we're
-                    // actively transferring to, AND we have the key locally, process it
-                    // here. This breaks the A→C→A forwarding loop during recovery.
+                    // actively transferring to, handle it here to avoid A→C→A loops.
                     if (packet.isForwarded
                             && keyTransferService.isActiveTransferTarget(responsible.id)
                             && packet.senderNodeId == responsible.id
-                            && (command == CMD_GET || command == CMD_REMOVE)
-                            && KeyValueStore.containsKey(key)) {
-                        // Tombstone REMOVE so transfer doesn't resurrect it
-                        if (command == CMD_REMOVE) {
-                            keyTransferService.markRemovedDuringRecovery(key);
+                            && (command == CMD_GET || command == CMD_REMOVE)) {
+                        if (KeyValueStore.containsKey(key)) {
+                            // Tombstone REMOVE so transfer doesn't resurrect it
+                            if (command == CMD_REMOVE) {
+                                keyTransferService.markRemovedDuringRecovery(key);
+                            }
+                            processLocally(packet, msg, request, command, messageId, messageIdBytes);
+                        } else {
+                            // Key already transferred and deleted — tell client to retry.
+                            // The recovering node (A) has the key by now.
+                            sendResponse(packet, buildMsg(messageId, buildOverloadResponse(303)));
                         }
-                        processLocally(packet, msg, request, command, messageId, messageIdBytes);
                         return;
                     }
 

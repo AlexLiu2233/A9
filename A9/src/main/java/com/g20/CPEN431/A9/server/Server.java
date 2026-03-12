@@ -124,6 +124,20 @@ public class Server {
                     continue;
                 }
 
+                if (KeyTransferService.isTransferAckMessage(buffer, len)) {
+                    byte[] copy = new byte[len];
+                    System.arraycopy(buffer, 0, copy, 0, len);
+                    keyTransferService.handleTransferAck(copy, len);
+                    continue;
+                }
+
+                if (KeyTransferService.isTransferPendingMessage(buffer, len)) {
+                    byte[] copy = new byte[len];
+                    System.arraycopy(buffer, 0, copy, 0, len);
+                    keyTransferService.handleTransferPending(copy, len);
+                    continue;
+                }
+
                 if (isResponseMessage(buffer, len)) {
                     relayForwardResponse(buffer, len);
                     continue;

@@ -54,6 +54,9 @@ public class NodeStatus {
         if (incomingCounter > this.heartbeatCounter) {
             this.heartbeatCounter = incomingCounter;
             this.localTimestamp = System.currentTimeMillis();
+            // Ensure node is in the hash ring (needed for bootstrap where nodes
+            // are added to membership but not the ring until gossip confirms them)
+            hashRing.addNode(this.node);
         }
         return false;
     }

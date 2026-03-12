@@ -74,6 +74,10 @@ public final class Constants {
     /** How often to check for failed nodes (ms) */
     public static final long GOSSIP_FAILURE_CHECK_INTERVAL_MS = 500;
 
+    /** Number of gossip cycles to wait at startup before the ring is considered stable.
+     *  Allows membership to converge from multiple peers before routing requests. */
+    public static final int GOSSIP_WARMUP_CYCLES = 3;
+
     /** Time without heartbeat update before marking a node as failed (ms) */
     public static final long GOSSIP_T_FAIL_MS = 3000;
 
@@ -122,14 +126,32 @@ public final class Constants {
     /** Magic bytes for transfer complete notification */
     public static final byte[] TRANSFER_COMPLETE_MAGIC = {(byte) 0xFF, (byte) 0xC1, (byte) 0xD2, (byte) 0xE3};
 
+    /** Magic bytes for transfer ACK packets */
+    public static final byte[] TRANSFER_ACK_MAGIC = {(byte) 0xFF, (byte) 0xB1, (byte) 0xC2, (byte) 0xD3};
+
+    /** Transfer ACK size: 4 magic + 4 receiverId + 4 batchId */
+    public static final int TRANSFER_ACK_SIZE = 12;
+
+    /** Magic bytes for transfer pending notification (successor is recovering, will send soon) */
+    public static final byte[] TRANSFER_PENDING_MAGIC = {(byte) 0xFF, (byte) 0xA1, (byte) 0xB2, (byte) 0xC3};
+
+    /** Transfer pending size: 4 magic + 4 senderId */
+    public static final int TRANSFER_PENDING_SIZE = 8;
+
+    /** Maximum number of retries for unacknowledged transfer batches */
+    public static final int MAX_TRANSFER_RETRIES = 3;
+
+    /** Interval between transfer retry attempts (ms) */
+    public static final long TRANSFER_RETRY_INTERVAL_MS = 1000;
+
     /** How long sender holds transferred keys before deleting (ms) */
     public static final long TRANSFER_HOLD_TIME_MS = 10_000;
 
     /** Delay before exiting recovery mode after transfer complete (ms) */
     public static final long RECOVERY_GRACE_PERIOD_MS = 3_000;
 
-    /** Key transfer header: 4 magic + 4 senderId + 2 numEntries */
-    public static final int KEY_TRANSFER_HEADER_SIZE = 10;
+    /** Key transfer header: 4 magic + 4 senderId + 4 batchId + 2 numEntries */
+    public static final int KEY_TRANSFER_HEADER_SIZE = 14;
 
     /** Transfer complete size: 4 magic + 4 senderId + 4 totalKeys */
     public static final int TRANSFER_COMPLETE_SIZE = 12;

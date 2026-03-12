@@ -256,6 +256,38 @@ public class ConsistentHashmap {
     }
 
     /**
+     * Get the set of node IDs that are immediate successors of the given node's
+     * virtual positions. These are the nodes that absorbed the given node's keys
+     * when it was down.
+     */
+    public Set<Integer> getSuccessorNodeIds(Node node) {
+        lock.readLock().lock();
+        try {
+            Set<Integer> successors = new HashSet<>();
+            for (int i = 0; i < virtualNodes; i++) {
+                int h = hash(node.id + "-" + i);
+                Map.Entry<Integer, Node> entry = ring.higherEntry(h);
+                if (entry == null) entry = ring.firstEntry();
+                if (entry == null) continue;
+
+                // Walk clockwise until we find a different physical node
+                Integer startKey = entry.getKey();
+                do {
+                    if (entry.getValue().id != node.id) {
+                        successors.add(entry.getValue().id);
+                        break;
+                    }
+                    entry = ring.higherEntry(entry.getKey());
+                    if (entry == null) entry = ring.firstEntry();
+                } while (!entry.getKey().equals(startKey));
+            }
+            return successors;
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
      * Hash function using MD5
      */
     private int hash(String key) {

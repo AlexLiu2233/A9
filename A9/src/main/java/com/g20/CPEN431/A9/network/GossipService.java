@@ -58,6 +58,10 @@ public class GossipService {
     // Key transfer service (set after construction)
     private volatile KeyTransferService keyTransferService;
 
+    // Warmup: ring is not stable until a few gossip cycles have run,
+    // allowing membership to converge from multiple peers.
+    private volatile boolean ringStable = false;
+
     public GossipService(Node selfNode, DatagramSocket socket, ConsistentHashmap hashRing) {
         this.selfNode = selfNode;
         this.socket = socket;
@@ -74,13 +78,15 @@ public class GossipService {
 
     /**
      * Bootstrap: add known peers to the membership list so we can gossip with them.
-     * They are marked alive initially; if they don't respond, failure detection will handle it.
+     * Nodes are added to the membership list (alive) so gossip can reach them,
+     * but NOT to the hash ring. Gossip responses will confirm which nodes are
+     * actually alive and add them to the ring. This avoids routing to dead nodes
+     * during a rejoin when some peers may be down.
      */
     public void addBootstrapNodes(List<Node> nodes) {
         for (Node node : nodes) {
             if (node.id == selfNode.id) continue;
             membershipList.putIfAbsent(node.id, new NodeStatus(node, 0));
-            hashRing.addNode(node);
         }
     }
 
@@ -91,6 +97,14 @@ public class GossipService {
         gossipThread = new Thread(this::gossipAndFailureLoop, "Gossip-Thread");
         gossipThread.setDaemon(true);
         gossipThread.start();
+    }
+
+    /**
+     * Whether the hash ring has stabilized after startup.
+     * False during the brief warmup period (a few gossip cycles).
+     */
+    public boolean isRingStable() {
+        return ringStable;
     }
 
     /**
@@ -108,11 +122,18 @@ public class GossipService {
      */
     private void gossipAndFailureLoop() {
         long lastFailureCheck = System.currentTimeMillis();
+        int warmupCyclesRemaining = GOSSIP_WARMUP_CYCLES;
 
         while (running) {
             try {
                 Thread.sleep(GOSSIP_INTERVAL_MS);
                 if (!running) break;
+
+                // --- Warmup tracking ---
+                if (!ringStable && --warmupCyclesRemaining <= 0) {
+                    ringStable = true;
+                    System.out.println("[Gossip] Warmup complete — ring marked stable");
+                }
 
                 // --- Gossip work ---
                 heartbeatCounter.incrementAndGet();
@@ -210,6 +231,12 @@ public class GossipService {
                     membershipList.put(entry.nodeId, newStatus);
                     hashRing.addNode(newNode);
                     System.out.println("[Gossip] Discovered new node " + entry.nodeId);
+
+                    // If we are this node's successor, we may need to transfer keys
+                    // to it once our own recovery completes (cascading failure case).
+                    if (keyTransferService != null) {
+                        keyTransferService.onNodeRejoined(newNode);
+                    }
                 }
             } else {
                 // Existing node - atomically update heartbeat and detect rejoin
