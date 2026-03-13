@@ -113,6 +113,8 @@ public class KeyTransferService {
         final int predecessorId;
         final Node predecessorNode;
         Iterator<Map.Entry<ByteString, byte[]>> iterator;
+        // Entry that didn't fit in the previous batch — must be sent first in the next one
+        Map.Entry<ByteString, byte[]> pendingEntry;
         final Set<Integer> pendingBatchSeqs = ConcurrentHashMap.newKeySet();
         final ConcurrentHashMap<Integer, List<ByteString>> sentKeysByBatch = new ConcurrentHashMap<>();
         // Raw data for unACK'd batches so we can resend on retry
@@ -126,6 +128,7 @@ public class KeyTransferService {
             this.predecessorId = predecessorId;
             this.predecessorNode = predecessorNode;
             this.iterator = KeyValueStore.entrySet().iterator();
+            this.pendingEntry = null;
             this.totalKeysSent = 0;
             this.complete = false;
             this.lastRequestTime = System.currentTimeMillis();
@@ -486,8 +489,8 @@ public class KeyTransferService {
             }
         }
 
-        System.out.println("[KeyTransfer] Pull response from node " + senderId
-                + " batch " + batchSeq + ": stored=" + stored + ", skipped=" + skipped);
+        // System.out.println("[KeyTransfer] Pull response from node " + senderId
+        //         + " batch " + batchSeq + ": stored=" + stored + ", skipped=" + skipped);
 
         ps.waitingForResponse = false;
         ps.retryCount = 0;
@@ -538,7 +541,7 @@ public class KeyTransferService {
         if (ps != null) {
             ps.waitingForResponse = false;
             ps.retryCount = 0; // Reset retry count since successor is alive, just not ready
-            System.out.println("[KeyTransfer] Successor " + senderId + " not ACTIVE, will retry");
+            // System.out.println("[KeyTransfer] Successor " + senderId + " not ACTIVE, will retry");
         }
     }
 
@@ -623,8 +626,8 @@ public class KeyTransferService {
                 }
                 serverState.sentKeyBytesByBatch.put(batchSeq, oldKeys);
                 serverState.sentRawDataByBatch.put(batchSeq, oldRawData);
-                System.out.println("[KeyTransfer] Resent " + oldKeys.size() + " unACK'd keys to node "
-                        + requesterId + " (old batch " + oldestPendingSeq + " -> new batch " + batchSeq + ")");
+                // System.out.println("[KeyTransfer] Resent " + oldKeys.size() + " unACK'd keys to node "
+                //         + requesterId + " (old batch " + oldestPendingSeq + " -> new batch " + batchSeq + ")");
                 return;
             }
         }
@@ -635,6 +638,26 @@ public class KeyTransferService {
         List<byte[]> batchRawData = new ArrayList<>();
         List<ByteString> batchByteStringKeys = new ArrayList<>();
         int batchSize = 0;
+
+        // Process the entry that didn't fit in the previous batch first
+        if (serverState.pendingEntry != null) {
+            Map.Entry<ByteString, byte[]> entry = serverState.pendingEntry;
+            serverState.pendingEntry = null;
+            ByteString key = entry.getKey();
+            byte[] rawData = entry.getValue();
+
+            if (!transferredKeys.contains(key)) {
+                Node owner = ConsistentHashmap.getNodeForKeyFromSnapshot(key.toByteArray(), snapshot);
+                if (owner != null && owner.id != selfNode.id) {
+                    byte[] keyBytes = key.toByteArray();
+                    int entrySize = 2 + keyBytes.length + 4 + rawData.length;
+                    batchKeys.add(keyBytes);
+                    batchRawData.add(rawData);
+                    batchByteStringKeys.add(key);
+                    batchSize += entrySize;
+                }
+            }
+        }
 
         while (serverState.iterator.hasNext()) {
             Map.Entry<ByteString, byte[]> entry = serverState.iterator.next();
@@ -652,7 +675,8 @@ public class KeyTransferService {
 
                 if (batchSize + entrySize > MAX_PACKET_PAYLOAD - KEY_TRANSFER_HEADER_SIZE
                         && !batchKeys.isEmpty()) {
-                    // Batch is full, send what we have
+                    // Batch is full — save this entry for the next batch
+                    serverState.pendingEntry = entry;
                     break;
                 }
 
@@ -671,8 +695,8 @@ public class KeyTransferService {
             serverState.sentKeyBytesByBatch.put(batchSeq, batchKeys);
             serverState.sentRawDataByBatch.put(batchSeq, batchRawData);
             serverState.totalKeysSent += batchKeys.size();
-            System.out.println("[KeyTransfer] Sent " + batchKeys.size() + " keys to node "
-                    + requesterId + " (batch " + batchSeq + ")");
+            // System.out.println("[KeyTransfer] Sent " + batchKeys.size() + " keys to node "
+            //         + requesterId + " (batch " + batchSeq + ")");
         } else {
             // No more keys - send complete
             serverState.complete = true;
