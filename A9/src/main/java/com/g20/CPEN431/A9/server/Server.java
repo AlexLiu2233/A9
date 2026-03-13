@@ -31,7 +31,7 @@ public class Server {
     private final KeyTransferService keyTransferService;
     private final Node selfNode;
 
-    public Server(int port, List<Node> allNodes) throws SocketException {
+    public Server(int port, List<Node> allNodes, boolean isSeed) throws SocketException {
         this.socket = new DatagramSocket(port);
 
         try {
@@ -53,7 +53,7 @@ public class Server {
         this.gossipService = new GossipService(selfNode, socket, hashRing);
         gossipService.addBootstrapNodes(allNodes);
 
-        this.keyTransferService = new KeyTransferService(selfNode, socket, hashRing, gossipService);
+        this.keyTransferService = new KeyTransferService(selfNode, socket, hashRing, gossipService, isSeed);
 
         this.workers = new Worker[NUM_WORKERS];
         for (int i = 0; i < NUM_WORKERS; i++) {

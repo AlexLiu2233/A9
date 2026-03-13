@@ -18,13 +18,15 @@ public class Main {
 
     public static void main(String[] args) {
         if (args.length < 2) {
-            System.err.println("Usage: java Main <port> <nodes-file>");
+            System.err.println("Usage: java Main <port> <nodes-file> [--seed]");
             System.err.println("  nodes-file: one host:port per line (all known peers including self)");
+            System.err.println("  --seed: skip key transfer and start directly in ACTIVE state");
             System.exit(1);
         }
 
         int port = Integer.parseInt(args[0]);
         String nodesFile = args[1];
+        boolean isSeed = args.length >= 3 && "--seed".equals(args[2]);
 
         List<Node> allNodes = parseNodesFile(nodesFile, port);
         System.out.println("Loaded " + allNodes.size() + " nodes from " + nodesFile);
@@ -32,8 +34,9 @@ public class Main {
         Constants.init(allNodes.size());
 
         try {
-            Server server = new Server(port, allNodes);
-            System.out.println("Server is running on port: " + port + " (PID: " + PID + ")");
+            Server server = new Server(port, allNodes, isSeed);
+            System.out.println("Server is running on port: " + port + " (PID: " + PID + ")"
+                    + (isSeed ? " [SEED MODE]" : ""));
             server.start();
         } catch (SocketException e) {
             System.err.println("Failed to start server: " + e.getMessage());

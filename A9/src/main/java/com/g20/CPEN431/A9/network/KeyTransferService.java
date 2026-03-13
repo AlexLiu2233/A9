@@ -133,12 +133,16 @@ public class KeyTransferService {
     // Constructor and lifecycle
     // ========================
 
+    private final boolean isSeed;
+
     public KeyTransferService(Node selfNode, DatagramSocket socket,
-                              ConsistentHashmap hashRing, GossipService gossipService) {
+                              ConsistentHashmap hashRing, GossipService gossipService,
+                              boolean isSeed) {
         this.selfNode = selfNode;
         this.socket = socket;
         this.hashRing = hashRing;
         this.gossipService = gossipService;
+        this.isSeed = isSeed;
 
         this.pullThread = new Thread(this::pullLoop, "KeyTransfer-PullThread");
         this.pullThread.setDaemon(true);
@@ -149,6 +153,11 @@ public class KeyTransferService {
     }
 
     public void start() {
+        if (isSeed) {
+            System.out.println("[KeyTransfer] Seed mode: skipping key transfer, starting ACTIVE");
+            state = NodeState.ACTIVE;
+        }
+
         pullThread.start();
 
         // Schedule cleanup of stale pull server states

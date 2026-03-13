@@ -327,7 +327,7 @@ public class GossipService {
         for (int i = 0; i < limit; i++) {
             Map.Entry<Integer, NodeStatus> entry = peers.get(i);
             NodeStatus status = entry.getValue();
-            long[] snapshot = status.getSnapshot(); // [heartbeat, alive, generation]
+    long[] snapshot = status.getSnapshot(); // [heartbeat, alive, generation]
             msg.addEntry(
                     entry.getKey(),
                     GossipMessage.ipToInt(status.getNode().ipaddress),
