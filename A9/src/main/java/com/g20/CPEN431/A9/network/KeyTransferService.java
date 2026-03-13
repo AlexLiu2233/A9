@@ -596,9 +596,9 @@ public class KeyTransferService {
             // Skip keys already transferred and pending deletion
             if (transferredKeys.contains(key)) continue;
 
-            // Check if this key belongs to the requester
+            // Send all keys we don't own — covers requester and any predecessors in a recovery chain
             Node owner = ConsistentHashmap.getNodeForKeyFromSnapshot(key.toByteArray(), snapshot);
-            if (owner != null && owner.id == requesterId) {
+            if (owner != null && owner.id != selfNode.id) {
                 byte[] keyBytes = key.toByteArray();
                 int entrySize = 2 + keyBytes.length + 4 + rawData.length;
 

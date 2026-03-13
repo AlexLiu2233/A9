@@ -98,8 +98,11 @@ public final class Constants {
      *  Each entry is 29 bytes (includes 8-byte generation). Budget: (1400 - 13 header) / 29 ≈ 47 */
     public static final int GOSSIP_MAX_ENTRIES = 47;
 
-    /** Number of virtual nodes per physical node on the hash ring */
-    public static final int VIRTUAL_NODES = 3;
+    /** Number of virtual nodes per physical node on the hash ring.
+     *  WARNING: Virtual nodes > 1 is broken. It causes circular successor dependencies
+     *  that deadlock bootstrapping (SYNCH nodes all wait on each other) and key transfer
+     *  loses data when multiple predecessors recover simultaneously. Do not change from 1. */
+    public static final int VIRTUAL_NODES = 1;
 
     /** Magic bytes prefixed to forwarded UDP packets (A -> B).
      *  First byte 0xFF has wire-type 7 in protobuf, which is invalid —
