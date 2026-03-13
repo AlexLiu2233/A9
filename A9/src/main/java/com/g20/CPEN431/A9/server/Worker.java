@@ -95,8 +95,13 @@ public class Worker extends Thread {
             }
 
             // During gossip warmup, drop KV requests — ring hasn't stabilized yet.
-            // Clients will retry after the brief warmup period (~600ms).
             if (!gossipService.isRingStable()) {
+                return;
+            }
+
+            // During JOINING, reject all KV requests with overload
+            if (keyTransferService.getState() == KeyTransferService.NodeState.JOINING) {
+                sendResponse(packet, buildMsg(messageId, buildOverloadResponse(OVERLOAD_WAIT_TIME_MS)));
                 return;
             }
 
@@ -111,7 +116,7 @@ public class Worker extends Thread {
                     // Loop-breaking rule: if the sender is a recovering node that we're
                     // actively transferring to, handle it here to avoid A→C→A loops.
                     if (packet.isForwarded
-                            && keyTransferService.isActiveTransferTarget(responsible.id)
+                            && keyTransferService.isActivePullClient(responsible.id)
                             && packet.senderNodeId == responsible.id
                             && (command == CMD_GET || command == CMD_REMOVE)) {
                         if (KeyValueStore.containsKey(key)) {

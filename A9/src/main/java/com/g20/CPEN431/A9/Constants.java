@@ -172,6 +172,28 @@ public final class Constants {
     /** Timeout for awaiting-recovery state: if no transfer arrives, assume clean bootstrap */
     public static final long AWAITING_RECOVERY_TIMEOUT_MS = 15_000;
 
+    // ========================
+    // Pull-based key transfer
+    // ========================
+
+    /** Magic bytes for pull request packets (recovering node -> successor) */
+    public static final byte[] PULL_REQUEST_MAGIC = {(byte) 0xFF, (byte) 0xE1, (byte) 0xF2, (byte) 0xA3};
+
+    /** Pull request size: 4 magic + 4 senderId + 4 batchSeq */
+    public static final int PULL_REQUEST_SIZE = 12;
+
+    /** How often the pull loop sends pull requests (ms) */
+    public static final long PULL_INTERVAL_MS = 200;
+
+    /** Timeout for a pull request before re-sending (ms) */
+    public static final long PULL_REQUEST_TIMEOUT_MS = 2000;
+
+    /** Max retries for a pull request to a specific successor */
+    public static final int MAX_PULL_RETRIES = 5;
+
+    /** Timeout for stale pull server state (no request from predecessor) (ms) */
+    public static final long PULL_CLIENT_TIMEOUT_MS = 30_000;
+
     public static boolean isMutableCommand(int command) {
         return command == CMD_PUT || command == CMD_REMOVE ||
                 command == CMD_WIPEOUT;

@@ -57,9 +57,6 @@ public class GossipService {
     private volatile boolean running = true;
     private Thread gossipThread;
 
-    // Key transfer service (set after construction)
-    private volatile KeyTransferService keyTransferService;
-
     // Warmup: ring is not stable until a few gossip cycles have run,
     // allowing membership to converge from multiple peers.
     private volatile boolean ringStable = false;
@@ -74,10 +71,6 @@ public class GossipService {
         selfStatus.setOnRing(true);
         membershipList.put(selfNode.id, selfStatus);
         hashRing.addNode(selfNode);
-    }
-
-    public void setKeyTransferService(KeyTransferService keyTransferService) {
-        this.keyTransferService = keyTransferService;
     }
 
     /**
@@ -269,12 +262,6 @@ public class GossipService {
                     membershipList.put(entry.nodeId, newStatus);
                     hashRing.addNode(newNode);
                     System.out.println("[Gossip] Discovered new node " + entry.nodeId);
-
-                    // If we are this node's successor, we may need to transfer keys
-                    // to it once our own recovery completes (cascading failure case).
-                    if (keyTransferService != null) {
-                        keyTransferService.onNodeRejoined(newNode);
-                    }
                 }
             } else {
                 if (entry.alive) {
@@ -284,9 +271,6 @@ public class GossipService {
                             entry.generation, entry.heartbeatCounter, hashRing);
                     if (rejoined) {
                         System.out.println("[Gossip] Node " + entry.nodeId + " has REJOINED");
-                        if (keyTransferService != null) {
-                            keyTransferService.onNodeRejoined(existing.getNode());
-                        }
                     }
                 } else {
                     // Existing node reported as dead by another peer — mark as SUSPECT.

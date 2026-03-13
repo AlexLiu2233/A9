@@ -290,6 +290,38 @@ public class ConsistentHashmap {
     }
 
     /**
+     * Get the set of node IDs that are immediate predecessors of the given node's
+     * virtual positions. These are the nodes whose keys this node is responsible for
+     * serving during recovery.
+     */
+    public Set<Integer> getPredecessorNodeIds(Node node) {
+        lock.readLock().lock();
+        try {
+            Set<Integer> predecessors = new HashSet<>();
+            for (int i = 0; i < virtualNodes; i++) {
+                int h = hash(node.id + "-" + i);
+                Map.Entry<Integer, Node> entry = ring.lowerEntry(h);
+                if (entry == null) entry = ring.lastEntry();
+                if (entry == null) continue;
+
+                // Walk counter-clockwise until we find a different physical node
+                Integer startKey = entry.getKey();
+                do {
+                    if (entry.getValue().id != node.id) {
+                        predecessors.add(entry.getValue().id);
+                        break;
+                    }
+                    entry = ring.lowerEntry(entry.getKey());
+                    if (entry == null) entry = ring.lastEntry();
+                } while (!entry.getKey().equals(startKey));
+            }
+            return predecessors;
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
      * Hash function using MD5
      */
     private int hash(String key) {

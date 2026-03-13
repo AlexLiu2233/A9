@@ -53,8 +53,7 @@ public class Server {
         this.gossipService = new GossipService(selfNode, socket, hashRing);
         gossipService.addBootstrapNodes(allNodes);
 
-        this.keyTransferService = new KeyTransferService(selfNode, socket, hashRing);
-        gossipService.setKeyTransferService(keyTransferService);
+        this.keyTransferService = new KeyTransferService(selfNode, socket, hashRing, gossipService);
 
         this.workers = new Worker[NUM_WORKERS];
         for (int i = 0; i < NUM_WORKERS; i++) {
@@ -110,31 +109,38 @@ public class Server {
                     continue;
                 }
 
-                if (KeyTransferService.isKeyTransferMessage(buffer, len)) {
+                if (KeyTransferService.isPullRequestMessage(buffer, len)) {
                     byte[] copy = new byte[len];
                     System.arraycopy(buffer, 0, copy, 0, len);
-                    keyTransferService.handleKeyTransferPacket(copy, len);
+                    keyTransferService.handlePullRequest(copy, len);
                     continue;
                 }
 
-                if (KeyTransferService.isTransferCompleteMessage(buffer, len)) {
+                if (KeyTransferService.isPullResponseMessage(buffer, len)) {
                     byte[] copy = new byte[len];
                     System.arraycopy(buffer, 0, copy, 0, len);
-                    keyTransferService.handleTransferComplete(copy, len);
+                    keyTransferService.handlePullResponse(copy, len);
                     continue;
                 }
 
-                if (KeyTransferService.isTransferAckMessage(buffer, len)) {
+                if (KeyTransferService.isPullCompleteMessage(buffer, len)) {
                     byte[] copy = new byte[len];
                     System.arraycopy(buffer, 0, copy, 0, len);
-                    keyTransferService.handleTransferAck(copy, len);
+                    keyTransferService.handlePullComplete(copy, len);
                     continue;
                 }
 
-                if (KeyTransferService.isTransferPendingMessage(buffer, len)) {
+                if (KeyTransferService.isPullAckMessage(buffer, len)) {
                     byte[] copy = new byte[len];
                     System.arraycopy(buffer, 0, copy, 0, len);
-                    keyTransferService.handleTransferPending(copy, len);
+                    keyTransferService.handlePullAck(copy, len);
+                    continue;
+                }
+
+                if (KeyTransferService.isPullWaitMessage(buffer, len)) {
+                    byte[] copy = new byte[len];
+                    System.arraycopy(buffer, 0, copy, 0, len);
+                    keyTransferService.handlePullWait(copy, len);
                     continue;
                 }
 
