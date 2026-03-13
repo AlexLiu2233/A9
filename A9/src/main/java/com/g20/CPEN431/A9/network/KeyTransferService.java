@@ -115,6 +115,9 @@ public class KeyTransferService {
         Iterator<Map.Entry<ByteString, byte[]>> iterator;
         final Set<Integer> pendingBatchSeqs = ConcurrentHashMap.newKeySet();
         final ConcurrentHashMap<Integer, List<ByteString>> sentKeysByBatch = new ConcurrentHashMap<>();
+        // Raw data for unACK'd batches so we can resend on retry
+        final ConcurrentHashMap<Integer, List<byte[]>> sentRawDataByBatch = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<Integer, List<byte[]>> sentKeyBytesByBatch = new ConcurrentHashMap<>();
         volatile int totalKeysSent;
         volatile boolean complete;
         volatile long lastRequestTime;
@@ -368,6 +371,24 @@ public class KeyTransferService {
         }
     }
 
+    /**
+     * Reset to JOINING state (e.g. after SIGSTOP/SIGCONT detection).
+     * Keeps existing KV data but re-runs the pull protocol to fetch any
+     * keys that were written while this node was suspended.
+     */
+    public void resetToJoining() {
+        System.out.println("[KeyTransfer] Resetting to JOINING (suspend/resume detected)");
+        state = NodeState.JOINING;
+        perSuccessorState.clear();
+        currentSuccessorIds = new HashSet<>();
+        tombstones.clear();
+        batchSeqCounter.set(0);
+        // Wake pull thread if it's waiting in ACTIVE state
+        synchronized (this) {
+            this.notifyAll();
+        }
+    }
+
     private void transitionToActive() {
         state = NodeState.ACTIVE;
         perSuccessorState.clear();
@@ -581,6 +602,33 @@ public class KeyTransferService {
         serverState.lastRequestTime = System.currentTimeMillis();
         activePullClients.add(requesterId);
 
+        // If there are unACK'd batches, resend the oldest one instead of
+        // advancing the iterator. This prevents keys from being skipped
+        // when a PULL_RESPONSE packet is lost over UDP.
+        if (!serverState.pendingBatchSeqs.isEmpty()) {
+            int oldestPendingSeq = serverState.pendingBatchSeqs.iterator().next();
+            List<byte[]> oldKeys = serverState.sentKeyBytesByBatch.get(oldestPendingSeq);
+            List<byte[]> oldRawData = serverState.sentRawDataByBatch.get(oldestPendingSeq);
+            if (oldKeys != null && oldRawData != null) {
+                // Resend the unACK'd batch under the new batchSeq
+                serverState.pendingBatchSeqs.remove(oldestPendingSeq);
+                List<ByteString> oldByteStringKeys = serverState.sentKeysByBatch.remove(oldestPendingSeq);
+                serverState.sentKeyBytesByBatch.remove(oldestPendingSeq);
+                serverState.sentRawDataByBatch.remove(oldestPendingSeq);
+
+                sendPullResponse(serverState.predecessorNode, batchSeq, oldKeys, oldRawData);
+                serverState.pendingBatchSeqs.add(batchSeq);
+                if (oldByteStringKeys != null) {
+                    serverState.sentKeysByBatch.put(batchSeq, oldByteStringKeys);
+                }
+                serverState.sentKeyBytesByBatch.put(batchSeq, oldKeys);
+                serverState.sentRawDataByBatch.put(batchSeq, oldRawData);
+                System.out.println("[KeyTransfer] Resent " + oldKeys.size() + " unACK'd keys to node "
+                        + requesterId + " (old batch " + oldestPendingSeq + " -> new batch " + batchSeq + ")");
+                return;
+            }
+        }
+
         // Collect a batch of keys belonging to the requester
         TreeMap<Integer, Node> snapshot = hashRing.getRingSnapshot();
         List<byte[]> batchKeys = new ArrayList<>();
@@ -620,6 +668,8 @@ public class KeyTransferService {
             sendPullResponse(serverState.predecessorNode, batchSeq, batchKeys, batchRawData);
             serverState.pendingBatchSeqs.add(batchSeq);
             serverState.sentKeysByBatch.put(batchSeq, batchByteStringKeys);
+            serverState.sentKeyBytesByBatch.put(batchSeq, batchKeys);
+            serverState.sentRawDataByBatch.put(batchSeq, batchRawData);
             serverState.totalKeysSent += batchKeys.size();
             System.out.println("[KeyTransfer] Sent " + batchKeys.size() + " keys to node "
                     + requesterId + " (batch " + batchSeq + ")");
@@ -653,6 +703,8 @@ public class KeyTransferService {
         if (serverState == null) return;
 
         serverState.pendingBatchSeqs.remove(batchSeq);
+        serverState.sentKeyBytesByBatch.remove(batchSeq);
+        serverState.sentRawDataByBatch.remove(batchSeq);
 
         // Mark ACK'd keys as transferred — they won't be sent to other predecessors
         // and will be deleted after the hold timer

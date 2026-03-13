@@ -51,11 +51,15 @@ public class GossipService {
     // Our own heartbeat counter
     private final AtomicLong heartbeatCounter = new AtomicLong(0);
 
-    // Our generation (startup timestamp) — distinguishes incarnations across restarts
-    private final long selfGeneration = System.currentTimeMillis();
+    // Our generation (startup timestamp) — distinguishes incarnations across restarts.
+    // Mutable: bumped on SIGSTOP/SIGCONT detection (time-jump) to force rejoin.
+    private volatile long selfGeneration = System.currentTimeMillis();
 
     private volatile boolean running = true;
     private Thread gossipThread;
+
+    // Optional callback invoked when a suspend/resume (time-jump) is detected
+    private volatile Runnable onSuspendResumeDetected;
 
     // Warmup: ring is not stable until a few gossip cycles have run,
     // allowing membership to converge from multiple peers.
@@ -105,6 +109,14 @@ public class GossipService {
     }
 
     /**
+     * Register a callback to be invoked when a suspend/resume (SIGSTOP/SIGCONT)
+     * is detected via a wall-clock time jump.
+     */
+    public void setOnSuspendResumeDetected(Runnable callback) {
+        this.onSuspendResumeDetected = callback;
+    }
+
+    /**
      * Stop the gossip service.
      */
     public void stop() {
@@ -119,6 +131,7 @@ public class GossipService {
      */
     private void gossipAndFailureLoop() {
         long lastFailureCheck = System.currentTimeMillis();
+        long lastLoopTime = System.currentTimeMillis();
         int warmupCyclesElapsed = 0;
         int stableCount = 0;
         int lastRingSize = 0;
@@ -127,6 +140,31 @@ public class GossipService {
             try {
                 Thread.sleep(GOSSIP_INTERVAL_MS);
                 if (!running) break;
+
+                // --- Suspend/resume detection via wall-clock time jump ---
+                // If we slept for GOSSIP_INTERVAL_MS but the wall clock advanced
+                // by much more, we were likely suspended (SIGSTOP/SIGCONT).
+                long now = System.currentTimeMillis();
+                long elapsed = now - lastLoopTime;
+                lastLoopTime = now;
+
+                if (elapsed > GOSSIP_T_FAIL_MS) {
+                    System.out.println("[Gossip] Time jump detected (" + elapsed
+                            + "ms elapsed, expected ~" + GOSSIP_INTERVAL_MS
+                            + "ms). Likely SIGSTOP/SIGCONT — bumping generation for rejoin.");
+                    selfGeneration = System.currentTimeMillis();
+
+                    // Reset warmup so ring can re-stabilize after rejoining
+                    ringStable = false;
+                    warmupCyclesElapsed = 0;
+                    stableCount = 0;
+                    lastRingSize = 0;
+
+                    Runnable callback = onSuspendResumeDetected;
+                    if (callback != null) {
+                        callback.run();
+                    }
+                }
 
                 // --- Warmup tracking: ring stable when size stops changing ---
                 // Require at least one peer (size > 1) before declaring stable,
@@ -181,7 +219,7 @@ public class GossipService {
                 }
 
                 // --- Failure detection (on interval) ---
-                long now = System.currentTimeMillis();
+                now = System.currentTimeMillis();
                 if (now - lastFailureCheck >= GOSSIP_FAILURE_CHECK_INTERVAL_MS) {
                     lastFailureCheck = now;
 

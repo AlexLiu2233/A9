@@ -55,6 +55,9 @@ public class Server {
 
         this.keyTransferService = new KeyTransferService(selfNode, socket, hashRing, gossipService, isSeed);
 
+        // On suspend/resume detection, reset key transfer to re-pull keys from successors
+        gossipService.setOnSuspendResumeDetected(keyTransferService::resetToJoining);
+
         this.workers = new Worker[NUM_WORKERS];
         for (int i = 0; i < NUM_WORKERS; i++) {
             workers[i] = new Worker(i, this.socket, gossipService, keyTransferService, selfNode);
