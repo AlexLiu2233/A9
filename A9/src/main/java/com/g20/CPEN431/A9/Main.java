@@ -1,6 +1,7 @@
 package com.g20.CPEN431.A9;
 
 import com.g20.CPEN431.A9.server.Server;
+import com.g20.CPEN431.A9.storage.KeyValueStore;
 import com.g20.CPEN431.A9.network.Node;
 
 import java.io.BufferedReader;
@@ -32,6 +33,7 @@ public class Main {
         System.out.println("Loaded " + allNodes.size() + " nodes from " + nodesFile);
 
         Constants.init(allNodes.size());
+        KeyValueStore.initMemoryCap();
 
         try {
             Server server = new Server(port, allNodes, isSeed);

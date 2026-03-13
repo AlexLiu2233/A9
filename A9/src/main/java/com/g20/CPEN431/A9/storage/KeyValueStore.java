@@ -24,7 +24,14 @@ public class KeyValueStore {
     private static final AtomicLong bytesUsed = new AtomicLong(0);
 
     // Memory cap for the store: total available memory minus memory used by queues, cache, JVM, etc.
-    private static final long MEMORY_CAP = Runtime.getRuntime().maxMemory() - Constants.MEMORY_THRESHOLD_BYTES;
+    // Must be initialized after Constants.init() via initMemoryCap().
+    private static long MEMORY_CAP;
+
+    public static void initMemoryCap() {
+        long systemMem = Runtime.getRuntime().maxMemory();
+        MEMORY_CAP = systemMem - Constants.MEMORY_THRESHOLD_BYTES;
+        System.out.println("Total System Memory: " + systemMem + ". Memory Reserved for System Processes: " + Constants.MEMORY_THRESHOLD_BYTES + ". KV Store Memory Cap: " + MEMORY_CAP + ".");
+    }
 
     // Estimated overhead per entry:
     // - ConcurrentHashMap.Node: ~48 bytes (object header, hash, pointers)

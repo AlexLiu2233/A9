@@ -61,7 +61,7 @@ public final class Constants {
         MEMORY_THRESHOLD_BYTES = QUEUE_MEMORY + CACHE_MEMORY + JVM_OVERHEAD + OPERATIONAL_RESERVE;
         System.out.println("Constants: " + nodesOnHost + " nodes on host, "
                 + Runtime.getRuntime().availableProcessors() + " cores -> "
-                + NUM_WORKERS + " workers");
+                + NUM_WORKERS + " workers. Memory");
     }
 
     // ========================
