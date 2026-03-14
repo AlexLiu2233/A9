@@ -1,5 +1,4 @@
- ```markdown
-# G20 - Distributed Systems Assignment 7
+# G20 - Distributed Systems Assignment 9
 
 **Group ID:** G20  
 **Verification Code:** 5409645920
@@ -8,93 +7,175 @@
 
 ## Deployment Commands
 
+Assignment 9 deploys **80 nodes** with netem parameters (5ms delay, 0.25% loss) and uses a `--seed` flag for cluster bootstrapping.
+
 ### Server EC2 Instance
 
 ```bash
-# Kill any old servers
-pkill -f "A7-1.0-SNAPSHOT" 2>/dev/null
+#!/usr/bin/env bash
+set -euo pipefail
+
+JAR="A9-1.0-SNAPSHOT-jar-with-dependencies.jar"
+SERVER_PRIVATE_IP="172.31.44.173"
+START_PORT=43100
+END_PORT=43179
+MEM_PER_SERVER="512m"
+NODE_FILE="nodes_server.txt"
+NODE_COUNT=$(( END_PORT - START_PORT + 1 ))   # 80
+
+# Auto-detect main network interface
+IFACE=$(ip route get 8.8.8.8 | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+echo "Detected interface: $IFACE"
+
+echo "=== Stopping old A9 servers ==="
+pkill -f "$JAR" 2>/dev/null || true
 sleep 2
+pkill -9 -f "$JAR" 2>/dev/null || true
+sleep 3
 
-# Create nodes file with public IP
-cat > nodes_server.txt << 'EOF'
-34.228.184.115:43100
-34.228.184.115:43101
-34.228.184.115:43102
-34.228.184.115:43103
-34.228.184.115:43104
-34.228.184.115:43105
-34.228.184.115:43106
-34.228.184.115:43107
-34.228.184.115:43108
-34.228.184.115:43109
-34.228.184.115:43110
-34.228.184.115:43111
-34.228.184.115:43112
-34.228.184.115:43113
-34.228.184.115:43114
-34.228.184.115:43115
-34.228.184.115:43116
-34.228.184.115:43117
-34.228.184.115:43118
-34.228.184.115:43119
-EOF
+echo "=== Checking ports are free ==="
+BUSY=0
+for PORT in $(seq $START_PORT $END_PORT); do
+    if ss -lunp | grep -q ":${PORT} "; then
+        echo "  WARNING: port $PORT still in use!"
+        BUSY=1
+    fi
+done
+if [ "$BUSY" -eq 1 ]; then
+    echo "Waiting extra 5s for ports to release..."
+    sleep 5
+fi
+echo "Ports check done."
 
-# Set up network emulation
-sudo tc qdisc add dev lo root netem delay 5msec loss 2.5%
-sudo tc qdisc add dev ens5 root netem delay 5msec loss 2.5%
+echo "=== Clearing old netem rules ==="
+sudo tc qdisc del dev lo      root 2>/dev/null || true
+sudo tc qdisc del dev "$IFACE" root 2>/dev/null || true
 
-# Launch 20 servers
-for i in $(seq 0 19); do
-    PORT=$((43100 + i))
-    nohup java -Xmx64m -jar A7-1.0-SNAPSHOT-jar-with-dependencies.jar $PORT nodes_server.txt > server_${PORT}.log 2>&1 &
+echo "=== Applying netem (A9: 5ms delay, 0.25% loss) ==="
+sudo tc qdisc add dev lo      root netem delay 5ms loss 0.25%
+sudo tc qdisc add dev "$IFACE" root netem delay 5ms loss 0.25%
+echo "netem applied to lo and $IFACE"
+
+echo "=== Verifying netem ==="
+tc qdisc show dev lo
+tc qdisc show dev "$IFACE"
+
+echo "=== Rebuilding $NODE_FILE ($NODE_COUNT nodes) ==="
+> "$NODE_FILE"
+for PORT in $(seq $START_PORT $END_PORT); do
+    echo "${SERVER_PRIVATE_IP}:${PORT}" >> "$NODE_FILE"
+done
+echo "Node file written."
+
+echo "=== Starting $NODE_COUNT A9 servers (each -Xmx${MEM_PER_SERVER}) ==="
+
+# --- Seed node first ---
+echo "  Starting SEED node on port $START_PORT..."
+nohup java -Xmx"$MEM_PER_SERVER" -jar "$JAR" "$START_PORT" "$NODE_FILE" --seed \
+    > "server_${START_PORT}.log" 2>&1 &
+sleep 2   # let seed initialize before remaining nodes join
+
+# --- Remaining nodes ---
+for PORT in $(seq $((START_PORT + 1)) $END_PORT); do
+    nohup java -Xmx"$MEM_PER_SERVER" -jar "$JAR" "$PORT" "$NODE_FILE" \
+        > "server_${PORT}.log" 2>&1 &
+    IDX=$(( PORT - START_PORT ))
+    if (( IDX % 10 == 0 )); then
+        sleep 1
+    fi
 done
 
-echo "Waiting 45s for servers to start..."
-sleep 45
-echo "Servers running:"
-ps aux | grep A7 | grep -v grep | wc -l
+echo "Waiting 20s for startup + gossip convergence..."
+sleep 20
+
+echo
+echo "=== Health check: processes ==="
+TOTAL=$(ps aux | grep "$JAR" | grep -v grep | wc -l)
+echo "Running processes: $TOTAL / $NODE_COUNT"
+DEAD=0
+for PORT in $(seq $START_PORT $END_PORT); do
+    if ! ps aux | grep -q "[j]ava.*${PORT}.*nodes_server"; then
+        echo "  DEAD: port $PORT"
+        echo "    Log tail: $(tail -1 "server_${PORT}.log" 2>/dev/null || echo 'no log')"
+        DEAD=$((DEAD + 1))
+    fi
+done
+if [ "$DEAD" -gt 0 ]; then
+    echo "WARNING: $DEAD node(s) not running! Check logs above."
+else
+    echo "All $NODE_COUNT nodes running."
+fi
+
+echo
+echo "=== Health check: ports listening ==="
+NOT_LISTENING=0
+for PORT in $(seq $START_PORT $END_PORT); do
+    if ! ss -lunp | grep -q ":${PORT} "; then
+        echo "  NOT LISTENING: $PORT"
+        NOT_LISTENING=$((NOT_LISTENING + 1))
+    fi
+done
+if [ "$NOT_LISTENING" -eq 0 ]; then
+    echo "All $NODE_COUNT ports listening."
+else
+    echo "WARNING: $NOT_LISTENING port(s) not listening!"
+fi
+
+echo
+echo "=== Ping sanity check (expect ~10ms RTT on localhost) ==="
+ping -c 3 127.0.0.1 | tail -2
+
+echo
+echo "=== Done ==="
 ```
 
 ### Client EC2 Instance
 
 ```bash
-# Start standalone localhost server (required for submit mode)
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOCAL_JAR="A9-1.0-SNAPSHOT-jar-with-dependencies.jar"
+EVAL_JAR="a9_2026_eval_tests_v2.jar"
+SERVER_PUBLIC_IP="98.86.242.181"
+START_PORT=43100
+END_PORT=43179
+SECRET_CODE="5409645920"
+NODE_FILE="nodes_server.txt"
+
+echo "Stopping old local standalone A9 server..."
+pkill -f "$LOCAL_JAR" 2>/dev/null || true
+sleep 2
+
+# --- Standalone node (collocated with eval client) ---
+# Spec: 127.0.0.1:43100, -Xmx64m, --seed (only node in its deployment)
+echo "Starting standalone localhost server for local check..."
 echo "127.0.0.1:43100" > nodes_standalone.txt
-nohup java -Xmx64m -jar A7-1.0-SNAPSHOT-jar-with-dependencies.jar 43100 nodes_standalone.txt > standalone_server.log 2>&1 &
+nohup java -Xmx64m -jar "$LOCAL_JAR" 43100 nodes_standalone.txt --seed > standalone_server.log 2>&1 &
 sleep 5
 
-# Verify standalone server is running
-ps aux | grep A7 | grep -v grep
+echo
+echo "Local standalone process check:"
+ps aux | grep "$LOCAL_JAR" | grep -v grep || true
 
-# Create servers list pointing to the remote server EC2 instance
-cat > nodes_server.txt << 'EOF'
-34.228.184.115:43100
-34.228.184.115:43101
-34.228.184.115:43102
-34.228.184.115:43103
-34.228.184.115:43104
-34.228.184.115:43105
-34.228.184.115:43106
-34.228.184.115:43107
-34.228.184.115:43108
-34.228.184.115:43109
-34.228.184.115:43110
-34.228.184.115:43111
-34.228.184.115:43112
-34.228.184.115:43113
-34.228.184.115:43114
-34.228.184.115:43115
-34.228.184.115:43116
-34.228.184.115:43117
-34.228.184.115:43118
-34.228.184.115:43119
-EOF
+# --- Build node file pointing to the 80-node remote deployment (public IPs) ---
+echo
+echo "Rebuilding $NODE_FILE for submit..."
+> "$NODE_FILE"
+for PORT in $(seq $START_PORT $END_PORT); do
+    echo "${SERVER_PUBLIC_IP}:${PORT}" >> "$NODE_FILE"
+done
 
-# Run eval client in submit mode
-java -Xmx6g -jar a7_2026_eval_tests_v1.jar \
+echo
+echo "First 5 lines of $NODE_FILE:"
+head -n 5 "$NODE_FILE"
+
+echo
+echo "Running evaluator submit..."
+java -Xmx12g -jar "$EVAL_JAR" \
     --submit \
-    --servers-list nodes_server.txt \
-    --secret-code 5409645920
+    --servers-list "$NODE_FILE" \
+    --secret-code "$SECRET_CODE"
 ```
 
 ---
@@ -124,4 +205,3 @@ A **consistent hash ring** was implemented to handle mapping nodes to a ring-spa
 |-----------|-------|
 | **File** | `RequestHandler.java` |
 | **Line** | 107 (context: lines 105-109) |
-```
