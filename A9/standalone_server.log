@@ -1,8 +1,12 @@
 nohup: ignoring input
 Loaded 1 nodes from nodes_standalone.txt
+Constants: 1 nodes on host, 32 cores -> 32 workers. Memory
+Total System Memory: 67108864. Memory Reserved for System Processes: 9058496. KV Store Memory Cap: 58050368.
 Self node: id=0 addr=127.0.0.1:43100
-Server is running on port: 43100 (PID: 4990)
+Server is running on port: 43100 (PID: 12456) [SEED MODE]
+[KeyTransfer] Seed mode: skipping key transfer, starting ACTIVE
+[Gossip] Warmup complete — ring marked stable (1 nodes)
 WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
-WARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/home/ubuntu/cpen431_2026_project_g20/A7/A7-1.0-SNAPSHOT-jar-with-dependencies.jar)
+WARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/home/ubuntu/cpen431_2026_project_g20/A9/A9-1.0-SNAPSHOT-jar-with-dependencies.jar)
 WARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor
 WARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release
