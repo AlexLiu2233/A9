@@ -182,6 +182,67 @@ java -Xmx12g -jar "$EVAL_JAR" \
 
 ## Architecture Overview
 
+### Repository / Package Structure
+
+```text
+A9/
+├── src/main/java/ca/NetSysLab/ProtocolBuffers/
+│   ├── Message.java
+│   ├── KeyValueRequest.java
+│   └── KeyValueResponse.java        # generated protobuf message classes
+├── src/main/java/com/g20/CPEN431/A9/
+│   ├── Main.java                    # entrypoint: parses nodes file, initializes server
+│   ├── Constants.java               # global tuning constants and protocol limits
+│   ├── server/
+│   │   ├── Server.java              # UDP receive loop and packet-type dispatch
+│   │   ├── Worker.java              # request execution / forwarding / overload handling
+│   │   └── RequestHandler.java      # PUT/GET/REMOVE/admin command handlers
+│   ├── network/
+│   │   ├── Node.java                # node identity on the cluster
+│   │   ├── NodeStatus.java          # alive/suspect/dead membership state
+│   │   ├── GossipMessage.java       # gossip wire format helpers
+│   │   ├── GossipService.java       # membership, failure detection, ring stabilization
+│   │   └── KeyTransferService.java  # join/rejoin recovery and pull-based key transfer
+│   ├── storage/
+│   │   ├── KeyValueStore.java       # memory-bounded in-memory key/value store
+│   │   └── ConsistentHashmap.java   # ownership ring and successor lookup
+│   ├── cache/
+│   │   ├── ResponseCache.java
+│   │   ├── ConcurrentResponseCache.java
+│   │   ├── DualResponseCache.java   # duplicate-response cache with rotating windows
+│   │   └── CachedResponse.java
+│   └── util/
+│       ├── MessageUtils.java        # checksum, forward/relay helpers, response builders
+│       └── MemoryUtils.java
+└── src/main/proto/
+    ├── Message.proto
+    ├── KeyValueRequest.proto
+    └── KeyValueResponse.proto       # protobuf schemas
+```
+
+### Runtime Boot Sequence
+
+1. `Main` parses the nodes file, computes node IDs by line order, initializes constants, and sets the key-value store memory cap.
+2. `Server` binds the UDP socket, finds the local node entry, and constructs the consistent hash ring.
+3. `GossipService` starts membership dissemination/failure detection.
+4. `KeyTransferService` starts recovery logic; seed nodes immediately enter `ACTIVE`.
+5. Worker threads start, and the main UDP loop dispatches gossip, recovery, forwarded, and client packets.
+
+### Request Lifecycle
+
+```mermaid
+flowchart TD
+    A[UDP packet arrives] --> B[Server.receive]
+    B --> C{Packet type}
+    C -->|Gossip| D[GossipService.handleGossipMessage]
+    C -->|Pull request / response / ack| E[KeyTransferService.handle...]
+    C -->|Forwarded response| F[Relay response to next hop or client]
+    C -->|Client or forwarded request| G[Parse protobuf Msg]
+    G --> H[Hash messageID to choose worker]
+    H --> I[Worker validates, routes, executes, caches]
+    I --> J[Send direct reply or relayed reply]
+```
+
 ### Consistent Hash Ring
 A **consistent hash ring** was implemented to handle mapping nodes to a ring-space. The implementation uses:
 
@@ -194,6 +255,66 @@ A **consistent hash ring** was implemented to handle mapping nodes to a ring-spa
 
 ### Inter-Node Communication
 **Gossip-style service** is used for peer-to-peer communication between nodes, enabling decentralized failure detection and state propagation.
+
+### Membership and Failure Detection
+
+Membership is maintained through push-pull gossip. Bootstrap peers are inserted into the membership table so that they can be contacted, but they are **not** placed on the hash ring until gossip confirms they are alive. This avoids routing requests to dead nodes during startup or rejoin.
+
+The ring is considered stable only after several gossip cycles with a stable observed membership size. This warmup reduces churn immediately after startup, and lets recovery wait for a reasonably converged view of the cluster before pulling keys.
+
+Failure detection is staged:
+
+```mermaid
+flowchart LR
+    Alive --> Suspect
+    Suspect --> Dead
+    Dead --> Cleanup[Removed from membership list]
+    Dead --> Rejoined[Fresh generation / heartbeat observed]
+```
+
+- **Alive**: node is responding to gossip or has fresh heartbeat information.
+- **Suspect**: node missed the failure timeout; it remains on the ring temporarily while waiting for refutation.
+- **Dead**: node failed to refute suspicion in time and is removed from the ring.
+- **Cleanup**: dead node is eventually removed from the membership table.
+- **Rejoined**: a node with a newer generation is re-added and treated as a fresh incarnation.
+
+Additionally, suspend/resume events (e.g. `SIGSTOP` / `SIGCONT`) are detected through a wall-clock time jump. When this happens, the node bumps its generation and re-enters recovery so peers treat it as a new incarnation rather than a stale survivor.
+
+### Recovery / Rejoin State Machine
+
+Key transfer is **pull-based**. A recovering node retrieves keys from its successor(s), because active successors are treated as the authoritative temporary holders for those key ranges.
+
+```mermaid
+stateDiagram-v2
+    [*] --> JOINING
+    JOINING --> SYNCHING: ring stable + successor(s) known
+    SYNCHING --> ACTIVE: all required pull streams complete
+    ACTIVE --> JOINING: suspend/resume detected or forced rejoin
+```
+
+- **JOINING**: node has started, but waits for ring stabilization and suitable successors.
+- **SYNCHING**: node issues pull requests, receives key batches, ACKs them, and tracks completion per successor.
+- **ACTIVE**: node serves normal traffic and can act as a recovery source for predecessors.
+
+Local writes performed while recovering take precedence over transferred data. The storage layer supports this by exposing a `putIfAbsentRawBytes()` path for recovery traffic, ensuring transferred state does not overwrite newer local writes.
+
+### Storage and Memory Model
+
+| Topic | Implementation |
+|-------|----------------|
+| Store type | `ConcurrentHashMap<ByteString, byte[]>` |
+| Value format | `4-byte version` + raw value bytes |
+| Memory limit | Store capacity is derived from JVM max memory minus a reserved system/process budget |
+| Admission check | `canAddEntry()` estimates entry footprint before inserts |
+| Recovery support | Raw byte scans and `putIfAbsentRawBytes()` support pull-based synchronization |
+
+### Core Invariants
+
+- Only **ACTIVE** nodes are authoritative recovery sources for pulling key ownership during rejoin.
+- Known bootstrap peers may exist in membership before they are eligible to appear on the hash ring.
+- Ring stability is delayed until gossip warmup converges, reducing early routing churn.
+- A shutdown command exits immediately with no cleanup, as required by the assignment spec.
+- Local writes during recovery override transferred data from other nodes.
 
 ---
 
