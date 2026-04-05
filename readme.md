@@ -326,3 +326,20 @@ Local writes performed while recovering take precedence over transferred data. T
 |-----------|-------|
 | **File** | `RequestHandler.java` |
 | **Line** | 107 (context: lines 105-109) |
+
+
+echo ""
+echo "── Cluster status ──"
+echo "Node file:  nodes_server.txt"
+echo "Logs:       $LOG_DIR/"
+echo ""
+echo "To test (dry-run, local):"
+echo "  java -Xmx4g -jar a9_2026_eval_tests_v2.jar --servers-list=nodes_server.txt --secret-code=<your-secret>"
+echo ""
+echo "To run only performance:"
+echo "  java -Xmx4g -jar a9_2026_eval_tests_v2.jar --servers-list=nodes_server.txt --secret-code=<your-secret> --only-performance 512"
+echo ""
+echo "To run only suspend/rejoin:"
+echo "  java -Xmx4g -jar a9_2026_eval_tests_v2.jar --servers-list=nodes_server.txt --secret-code=<your-secret> --only-suspend-rejoin"
+echo ""
+echo "To stop:    pkill -f 'A9-1.0-SNAPSHOT' || kill ${PIDS[*]}"
