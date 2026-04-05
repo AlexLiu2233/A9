@@ -342,3 +342,13 @@ To run only suspend/rejoin:
 
 To stop:
   pkill -f 'A9-1.0-SNAPSHOT'
+
+
+
+  # Setup
+
+```bash
+sudo apt-get update
+sudo apt-get install -y net-tools
+sudo tc qdisc add dev lo root netem delay 5msec loss 2.5%
+```
