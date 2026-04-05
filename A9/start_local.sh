@@ -5,7 +5,7 @@ set -x
 JAR="A9-1.0-SNAPSHOT-jar-with-dependencies.jar"
 EVAL_JAR="a9_2026_eval_tests_v2.jar"
 START_PORT=43100
-NUM_NODES=20          # A9 dry-run minimum is 20 (submit requires 80)
+NUM_NODES=30          # A9 dry-run minimum is 20 (submit requires 80)
 NODE_FILE="nodes_local.txt"
 LOG_DIR="logs"
 
