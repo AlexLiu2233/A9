@@ -2,7 +2,7 @@
 set -uo pipefail
 set -x
 
-JAR="A11-1.0-SNAPSHOT-jar-with-dependencies.jar"
+JAR="A9-1.0-SNAPSHOT-jar-with-dependencies.jar"
 EVAL_JAR="a9_2026_eval_tests_v2.jar"
 START_PORT=43100
 NUM_NODES=20          # A9 dry-run minimum is 20 (submit requires 80)
@@ -22,7 +22,7 @@ fi
 
 # ── Clean up old instances ──
 echo "Killing old instances..."
-pkill -f "A11-1.0-SNAPSHOT" 2>/dev/null || true
+pkill -f "A9-1.0-SNAPSHOT" 2>/dev/null || true
 
 for PORT in $(seq $START_PORT $((START_PORT + NUM_NODES - 1))); do
     fuser -k "${PORT}/udp" 2>/dev/null || true
@@ -100,4 +100,4 @@ echo ""
 echo "To run only suspend/rejoin:"
 echo "  java -Xmx6g -jar $EVAL_JAR --servers-list $NODE_FILE --secret-code <your-secret> --only-suspend-rejoin"
 echo ""
-echo "To stop:    pkill -f 'A11-1.0-SNAPSHOT' || kill ${PIDS[*]}"
+echo "To stop:    pkill -f 'A9-1.0-SNAPSHOT' || kill ${PIDS[*]}"
