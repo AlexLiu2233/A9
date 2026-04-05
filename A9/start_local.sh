@@ -60,7 +60,7 @@ done
 
 echo ""
 echo "Waiting 20s for gossip convergence..."
-sleep 20
+sleep 40
 
 # ── Verify ──
 RUNNING=0
